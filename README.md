@@ -36,6 +36,11 @@ You will need:
 - To install nc (netcat) on each indexer to act as the transport mechanism until we have enough demand to build the transport into the script.
 - To make sure outbound communication from each indexer to the Cribl Worker TCP port is open.
 
+##Frozen Buckets
+The Splunk exporttool switch that scribl depends on requires a complete hot/warm/cold directory containing all of the metadata files in addition to the journal.gz file.  When buckets are moved to a frozen archive, all of the metadata files are removed with only the journal.gz file remaining.  Scribl can not extract raw events from frozen archives.
+
+Buckets must first be “thawed” as described [here](https://docs.splunk.com/Documentation/Splunk/9.0.1/Indexer/Restorearchiveddata).  It’s a straightforward process of copying the frozen buckets somewhere and running a “splunk rebuild” for each bucket to recreate the metadata.  Scribl can be run against this thawed data.
+
 # Technical
 ## Scale
 We achieve scale for large volumes of data by processing buckets in parallel across as many CPUs as you would like to dedicate AND by streaming the data directly from disk with a single read to Cribl without ever having to write extracted/uncompressed event data to disk.  Extracting/uncompressing the event data to disk would result in enormous disk IO bottlenecks and disk space consumption.  
