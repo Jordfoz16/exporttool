@@ -6,6 +6,8 @@
 #
 # Example:  scribl.py -d /opt/splunk/var/lib/splunk/bots/db/ -r 34.220.39.122 -p 20000 -t -n4 -l /tmp/scribl.log -et 1564819155 -lt 1566429310#
 #
+# Example:  scribl.py -d /opt/splunk/var/lib/splunk/bots/db/ -r 34.220.39.122 -p 20000 -l /tmp/scribl.log -kv index=test
+#
 # Required:
 #  -d  Source directory containing the buckets.
 #  -r  Remote address to send the exported data to.  This should be your Cribl worker with a TCP listener opened up.
@@ -16,7 +18,7 @@
 #  -l  Location to write/append the logging
 #  -et Earliest epoch time for bucket selection
 #  -lt Latest epoch time for bucket selection
-#  -kv Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times
+#  -kv Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times.  
 #
 # Make sure nc (netcat) is in the path or hard code it below to fit your needs
 #
