@@ -23,6 +23,8 @@
 # Make sure nc (netcat) is in the path or hard code it below to fit your needs
 #
 # If you use the -kv option, make sure your pipeline in Cribl Stream accounts for the new field(s)
+#
+#
 
 import argparse,os,subprocess,sys,time,logging,re
 from multiprocessing import Pool
