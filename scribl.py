@@ -4,12 +4,12 @@
 #
 # This is to be run on a Splunk Indexer for the purpose of exporting buckets and streaming their contents to Cribl Stream
 #
-# Example:  scribl.py -d /opt/splunk/var/lib/splunk/bots/db/ -r 34.220.39.122 -p 20000 -t -n4 -l /tmp/scribl.log -et 1564819155 -lt 1566429310#
+# Example:  scribl.py -d /opt/splunk/var/lib/splunk/bots/ -r 34.220.39.122 -p 20000 -t -n4 -l /tmp/scribl.log -et 1564819155 -lt 1566429310#
 #
-# Example:  scribl.py -d /opt/splunk/var/lib/splunk/bots/db/ -r 34.220.39.122 -p 20000 -l /tmp/scribl.log -kv index=test
+# Example:  scribl.py -d /opt/splunk/var/lib/splunk/bots/ -r 34.220.39.122 -p 20000 -l /tmp/scribl.log -kv index=test
 #
 # Required:
-#  -d  Source directory containing the buckets.
+#  -d  Source directory pointing at the index.  
 #  -r  Remote address to send the exported data to.  This should be your Cribl worker with a TCP listener opened up.
 #  -p  Remote TCP port to be used
 # Optional:
@@ -24,7 +24,11 @@
 #
 # If you use the -kv option, make sure your pipeline in Cribl Stream accounts for the new field(s)
 #
+# What's New?
 #
+# Version 2.0.0 (Dec 2022)
+#   - The -d option now needs to point at the directory containing the index name instead of the bucket (from 1.0.0)
+#   - Splunk SmartStore is now supported
 
 import argparse,os,subprocess,sys,time,logging,re
 from multiprocessing import Pool
@@ -39,21 +43,22 @@ def getArgs(argv=None):
     parser.add_argument("-lt","--latest", default=9999999999, type=int, help="Latest epoch time for bucket selection")
     parser.add_argument("-kv","--keyval", action='append', nargs='+', help="Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times")
     requiredNamed = parser.add_argument_group('required named arguments')
-    requiredNamed.add_argument("-d","--directory", help="Source directory containing the buckets", required=True)
+    requiredNamed.add_argument("-d","--directory", help="Source directory pointing at the index", required=True)
     requiredNamed.add_argument("-r","--remoteIP", help="Remote address to send the exported data to", required=True)
     requiredNamed.add_argument("-p","--remotePort", help="Remote TCP port to be used", required=True)
     return parser.parse_args(argv)
 
 def list_full_paths(directory,earliest,latest):
-    dirs=os.listdir(directory)
-    dirs=[x for x in dirs if x.startswith("db_")]   #keep only the dirs that we know contains buckets
-    for dir in dirs:
-        dirParsed=dir.split('_')
-        maxEpoch=dirParsed[1]
-        minEpoch=dirParsed[2]
-        if not earliest < int(minEpoch) and latest > int(maxEpoch):
-            dirs.remove(dir)
-    return [os.path.join(directory, file) for file in dirs]
+    buckets=[]
+    for root, dirs, files in os.walk(directory, topdown=True):
+        for file in files:
+            if "tsidx" in file: #We need to grab max/min epoch from tsidx since it's no longer in the bucket name with smartstore
+                fileParsed=file.split('-') # Grab max and min from file name
+                maxEpoch=fileParsed[0]
+                minEpoch=fileParsed[1]
+                if earliest < int(minEpoch) and latest > int(maxEpoch) and "DISABLED" not in root:  # filter buckets if user passed min/max epoch times
+                    buckets.append(root)
+    return(buckets)
 
 def buildCmdList(buckets,args):
     cliCommands=[]
