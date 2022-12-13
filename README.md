@@ -1,5 +1,11 @@
 # scribl.py
-Exporting Splunk Data at Scale with Scribl.  This is a python script that can be run on each Splunk Indexer for the purpose of exporting historical bucket data (raw events + metadata) at scale by balancing the work across multiple CPUs then forwarding to Cribl.
+Exporting Splunk Data at Scale with Scribl. This is a python script that can be run on each Splunk Indexer for the purpose of exporting historical bucket data (raw events + metadata) at scale by balancing the work across multiple CPUs then forwarding to Cribl.
+
+Scribl also supports the Splunk SmartStore configuration.  SmartStore uses AWS S3 API to plug into the remote storage tier. Remote storage options are AWS S3 and S3 API-compliant object stores, including Dell/EMC ECS, NetApp StorageGrid, Pure Storage Flash Blade and SwiftStack.  All you need to do is spin up Linux instances with lots of CPUs and memory, mount the AWS S3 (compliant) object store, install free Splunk, install scribl/netcat, and export the data.  Indexer guids come into play with Splunk's SmartStore config that affect the directory structure within the index but scribl was rewritten to track down .tsidx files within the index you wish to export then uses the parent directory as a target bucket for export.
+
+Supported:  On-Prem Splunk using local or SmartStore storage.  Splunk Cloud using a SmartStore configuration.  
+
+Not-Supported:  Splunk Cloud using a non-SmartStore configuration.
 
 # Background
 Splunk to Cribl = scribl (#thanksKam)
