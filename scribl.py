@@ -56,7 +56,9 @@ def list_full_paths(directory,earliest,latest):
                 fileParsed=file.split('-') # Grab max and min from file name
                 maxEpoch=fileParsed[0]
                 minEpoch=fileParsed[1]
-                if earliest < int(minEpoch) and latest > int(maxEpoch) and "DISABLED" not in root:  # filter buckets if user passed min/max epoch times
+                dirName=root.split("/")[-1:] #strip the path and grab the bucket name
+                if earliest < int(minEpoch) and latest > int(maxEpoch) and "DISABLED" not in root and not dirName[0].startswith("rb_"):  # filter buckets if user passed min/max epoch times
+                    # Will assume everything is a bucket except for dir names that contain DISABLED or are cluster associated replicated buckets (tested for non-smartstore)
                     buckets.append(root)
     return(buckets)
 
@@ -115,8 +117,8 @@ def main():
     logging.info('There are %s buckets in this directory that match the search criteria',len(buckets))
     logging.info('Exporting these buckets: %s',buckets)
     cliCommands=buildCmdList(buckets,args)
-    with Pool(args.numstreams) as p:
-        p.map(runCmd,cliCommands)
+    #with Pool(args.numstreams) as p:
+    #    p.map(runCmd,cliCommands)
     logging.info('Done with script in %s seconds',time.time()-startTime)
 
 if __name__ == "__main__":
