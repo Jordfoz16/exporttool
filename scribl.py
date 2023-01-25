@@ -117,8 +117,8 @@ def main():
     logging.info('There are %s buckets in this directory that match the search criteria',len(buckets))
     logging.info('Exporting these buckets: %s',buckets)
     cliCommands=buildCmdList(buckets,args)
-    #with Pool(args.numstreams) as p:
-    #    p.map(runCmd,cliCommands)
+    with Pool(args.numstreams) as p:
+        p.map(runCmd,cliCommands)
     logging.info('Done with script in %s seconds',time.time()-startTime)
 
 if __name__ == "__main__":
