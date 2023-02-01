@@ -11,6 +11,7 @@ Supported:  On-Prem Splunk using local or SmartStore storage.  Splunk Cloud usin
 Not-Supported:  Splunk Cloud using a non-SmartStore configuration.
 
 # Background
+
 Splunk to Cribl = scribl (#thanksKam)
 
 Exporting large amounts of previously indexed data from Splunk is challenging via the Splunk-supported approaches detailed here:  https://docs.splunk.com/Documentation/Splunk/8.2.6/Search/Exportsearchresults.
@@ -51,6 +52,7 @@ The Splunk exporttool switch that scribl depends on requires a complete hot/warm
 Buckets must first be “thawed” as described [here](https://docs.splunk.com/Documentation/Splunk/9.0.1/Indexer/Restorearchiveddata).  It’s a straightforward process of copying the frozen buckets somewhere and running a “splunk rebuild” for each bucket to recreate the metadata.  Scribl can be run against this thawed data.
 
 # Technical
+
 ## Scale
 We achieve scale for large volumes of data by processing buckets in parallel across as many CPUs as you would like to dedicate AND by streaming the data directly from disk with a single read to Cribl without ever having to write extracted/uncompressed event data to disk.  Extracting/uncompressing the event data to disk would result in enormous disk IO bottlenecks and disk space consumption.  
 
@@ -119,17 +121,87 @@ Once you have satisfied the above requirements (CLI, nc, and firewall) on your S
 
 Reference or download [this pdf document](https://github.com/criblio/scribl/blob/main/scribl-detailed-config.pdf) for detailed Cribl Stream configuration guidelines.
 
-# Caveats:
+# Comments/Caveats:
+
+## Cribl Stream Worker Load-Balancers
+Scribl will create a TCP connection for each bucket that is exported and if you are instructing scribl to use X CPUs to export an index, your load-balancer will see ~X concurrent connects at any given time balancing them across the load-balanced worker nodes.  Here are a few guidelines for configuring your load-balancer:
+
+- Configure scribl to send to the external IP or FQDN of the load-balancer.  Make sure you use nslookup to test that FQDN to make certain you don't have anything unexpected regarding multiple IPs.  This has happened.  We ran into an issue where someone configured DNS to return external IP addresses for load-balancers spread across multiple availability zones even though there were only workers in one of them.
+- Verify the configured port on the external interface of the load-balancer is the one scribl is sending data to.  If you opened up TLS/443, on the load-balancer, make sure you have “-t -p 443” args being used with scribl.  It’s perfectly fine to terminate SSL at the load-balancer and have the load-balancer send data to non-TLS ports using a different port number (ex port 20000) on the workers.
+- If you into an issue, you can run scribl directly to a worker node if it can be reached.
+- Double-check all firewall rules.
+- Instead of using scribl during your testing which is pretty heavy-handed, you can test with this as described [here](https://docs.cribl.io/stream/deploy-distributed/):
 
 ## Splunk Event Sizes
-
 You need to pay attention to event sizes in Splunk as it pertains to the Event breaking in Cribl.  As noted above in the Event Breaker screenshot, the max event size has a default setting of 51200 bytes.  If you use scribl to send events into Cribl Stream larger than that, things break.  Either increase your event breaking max event size, use the Cribl Stream Pipeline to drop the large events (example:  by sourcetype), or do not use scribl to export the buckets containing the large events.
 
 Here is a quick Splunk search highlighting the large events that need to be dealt with: index=bots|eval l=len(_raw)|where l>25000|stats count values(sourcetype) by l|sort - l
 
 ## Bottlenecks
-
 As mentioned above, the bottleneck you will most likely run into will be bandwidth in your data path or ingest rate at the final destination.  Anything you can do to parallelize that final write will pay dividends.  For example, you may want to use Cribl Stream’s Output Router to write to multiple S3 buckets based on the original Splunk Index or Sourcetype if bandwidth is not your bottleneck.
+
+## Index Clusters and replicated buckets
+See this for some background on what happens with bucket replication.  This is the important part: “The indexer cluster replicates data on a bucket-by-bucket basis. The original bucket copy and its replicated copies on other peer nodes contain identical sets of data, although only [searchable](https://docs.splunk.com/Splexicon:Searchable) copies also contain the index files.”
+
+The name of replicated buckets start with “rb_” which scribl ignores preventing the duplicate indexing of replicated buckets within the index cluster.  Scribl only operates on buckets whose names start with “db_”.
+
+## Hot Buckets
+Hot buckets are ignored.  Similar to how replicated bucket names begin with “_rb”, hot buckets start with “hot_” and they are both ignored within a simple if statement in the script. If you have a use case where you need to export hot buckets, feel free to modify the if statement.
+
+## Dynamic Data Self Storage (DDSS)
+If you are leveraging the Splunk Dynamic Data Self Storage option, you should be able to mount your private buckets containing the data and mount it just as we do for the Smart Store config above.
+
+## Splunk SmartStore Support
+[SmartStore](https://docs.splunk.com/Documentation/Splunk/9.0.1/Indexer/AboutSmartStore) is an indexer capability that provides a way to use remote object stores, such as Amazon S3, Google GCS, or Microsoft Azure Blob storage, to store indexed data.  At this point in time, Scribl has only been tested on AWS S3 Object Stores.  The below process was used to test Scribl.
+
+### S3 Object Store
+Create your S3 Object Store (bucket) in AWS S3 and make sure your indexer has the proper permission to access the store.  In this example, we create an IAM role granting proper S3 permissions and attached it to an indexer EC2 instance.  
+
+Upload a file to the bucket and validate your permission with:  
+
+aws s3 ls s3://smart-store-scribl
+
+### SmartStore config on the indexer /opt/splunk/etc/system/local/indexes.conf:
+        [default]
+        remotePath=volume:ecs_store/$_index_name
+
+        [volume:ecs_store]
+        storageType = remote
+        path = s3://smart-store-scribl/scribl
+
+Restart Splunk.  If you need to force a roll from hot to warm buckets in Splunk, use the below command to roll the _internal index:
+
+        /opt/splunk/bin/splunk _internal call /data/indexes/_internal/roll-hot-buckets
+
+You will notice that the local indexer bucket names may differ slightly from the standard config when using Smart Store but they still start with db_.  
+
+        ls -l /opt/splunk/var/lib/splunk/_internaldb/db
+        total 16
+        -rw------- 1 root root   10 Oct 24 16:03 CreationTime
+        drwx--x--- 3 root root  271 Oct 25 16:55 db_1666627667_1666627364_0_676B2388-3181-4A73-BD1E-43F02EF050B4
+        drwx--x--- 3 root root 4096 Oct 25 16:55 db_1666634954_1666627665_1_676B2388-3181-4A73-BD1E-43F02EF050B4
+        drwx--x--- 3 root root  271 Oct 25 16:55 db_1666635850_1666634954_2_676B2388-3181-4A73-BD1E-43F02EF050B4
+        drwx--x--- 3 root root  271 Oct 25 16:55 db_1666636181_1666635850_3_676B2388-3181-4A73-BD1E-43F02EF050B4
+        drwx--x--- 3 root root  271 Oct 25 16:55 db_1666639559_1666636180_4_676B2388-3181-4A73-BD1E-43F02EF050B4
+        drwx--x--- 3 root root  295 Oct 25 16:55 db_1666639746_1666639558_5_676B2388-3181-4A73-BD1E-43F02EF050B4
+        drwx--x--- 3 root root  271 Oct 25 16:55 db_1666716888_1666638001_6_676B2388-3181-4A73-BD1E-43F02EF050B4
+        drwx--x--- 3 root root  271 Oct 25 16:57 db_1666717006_1666716888_7_676B2388-3181-4A73-BD1E-43F02EF050B4
+        drwx--x--- 3 root root  295 Oct 25 17:00 db_1666717202_1666717006_8_676B2388-3181-4A73-BD1E-43F02EF050B4
+        drwx--x--- 3 root root  294 Oct 26 13:57 db_1666792676_1666717204_9_676B2388-3181-4A73-BD1E-43F02EF050B4
+        drwx--x--- 2 root root    6 Oct 24 16:03 GlobalMetaData
+        drwx--x--- 3 root root 4096 Nov  2 21:04 hot_v1_10
+        drwx--x--- 3 root root 4096 Nov  2 21:04 hot_v1_11
+
+### S3 Object Store Structure
+The directory structure within the S3 bucket is different than what is local to the indexer and will resemble something similar to the below.  This will be important as we will be mounting this bucket within Linux and pointing Scribl at this new structure to access buckets for exporting events.  The index name (_internal in thee below example) is the piece scribl needs to see.  You might want to mount the entire ‘scribl' directory to make sure you have access to all indexes in this object store.
+
+### Mount the Smart Store bucket and export
+We opted to use S3fs-fuse to mount the S3 bucket in Linux.  Follow the direction in the preceding link to install S3fs and mount the directory.  Once the directory is mounted, use scribl by pointing it at the index and scribl will figure out where the buckets are and filter as needed if you specified time constraints as arguments. 
+
+
+
+
+
 
 
 
