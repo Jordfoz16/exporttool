@@ -107,6 +107,11 @@ Example:
 ## Cribl Stream Routing
 The routing of data as you need it into the destination you need it to be in is one of the most important use cases Cribl Stream brings to the table.  Scribl is a great use case for that exact scenario.  You will likely have indexes you wish to export which contain multiple sourcetypes.  The Splunk sourcetype assignment is contained in every event that Cribl Stream processes.  You can filter, optimize, route, etc each of those sourcetypes however you choose.  We used Splunk's Boss of the SOC dataset for testing largely because it is real-world security data ingested during a live campaign and it contains a very diverse collection of data (souretypes) to best flush out unexpected bugs (multiline events, gigantic events, etc).  The github repo details over 100 sourcetypes available in the BOTSv3 dataset.
 
+## On No!  My Splunk license expired!
+Worry not, my friend.  When the enterprise license expires, Splunk customers are free to use the 60-day trial or even the free version of Splunk to perform the export.  Sanity check my claim here: [https://docs.splunk.com/Documentation/Splunk/9.0.0/Admin/MoreaboutSplunkFree](https://docs.splunk.com/Documentation/Splunk/9.0.0/Admin/MoreaboutSplunkFree).
+
+We don't care about indexing new data and we don't care about distributed search since we will use the trial/free Splunk binary in a standalone manner on each of the indexers that have data we need to migrate.  Just install trial/free Splunk on top of or alongside the existing install and point scribl.py at your splunk binary and the directory containing the buckets you need to export.
+
 ## Cribl Stream Config
 You can get started instantly with Cribl Cloud or even using the Cribl Free [license option](https://docs.cribl.io/stream/licensing/) but keep in mind daily ingest limits (very generous) and # of cores (also very generous at 10) that can be used may factor into a full scale data export. If you choose to install Cribl Stream on-prem on in your own cloud, the [documentation](https://docs.cribl.io/stream/getting-started-guide) is your friend and will get you going quickly.
 
