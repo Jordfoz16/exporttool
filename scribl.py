@@ -4,12 +4,16 @@
 #
 # This is to be run on a Splunk Indexer for the purpose of exporting buckets and streaming their contents to Cribl Stream
 #
+# Features:
+#   traditional, Smart Store, and frozen buckets
+#   skips cluster replicated and hot buckets
+#
 # Example:  scribl.py -d /opt/splunk/var/lib/splunk/bots/ -r 34.220.39.122 -p 20000 -t -n4 -l /tmp/scribl.log -et 1564819155 -lt 1566429310#
 #
 # Example:  scribl.py -d /opt/splunk/var/lib/splunk/bots/ -r 34.220.39.122 -p 20000 -l /tmp/scribl.log -kv index=test
 #
 # Required:
-#  -d  Source directory pointing at the index.  
+#  -d  Source directory pointing at the index.
 #  -r  Remote address to send the exported data to.  This should be your Cribl worker with a TCP listener opened up.
 #  -p  Remote TCP port to be used
 # Optional:
@@ -18,7 +22,7 @@
 #  -l  Location to write/append the logging
 #  -et Earliest epoch time for bucket selection
 #  -lt Latest epoch time for bucket selection
-#  -kv Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times.  
+#  -kv Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times.
 #
 # Make sure nc (netcat) is in the path or hard code it below to fit your needs
 #
@@ -29,8 +33,13 @@
 # Version 2.0.0 (Dec 2022)
 #   - The -d option now needs to point at the directory containing the index name instead of the bucket (from 1.0.0)
 #   - Splunk SmartStore is now supported
+#
+# Version 2.0.1 (Jan 2023)
+#   - skips hot buckets
+#   - fixed the filtering expression for selecting buckets based on earliest/latest time
 
-import argparse,os,subprocess,sys,time,logging,re
+
+import argparse,os,subprocess,sys,time,logging,re,datetime
 from multiprocessing import Pool
 
 def getArgs(argv=None):
@@ -49,6 +58,10 @@ def getArgs(argv=None):
     return parser.parse_args(argv)
 
 def list_full_paths(directory,earliest,latest):
+    #  We are accounting for directory structures specific to traditional on-prem and Smart Store
+    #  The one thing common to them that contains min/maw epoch times is the .tsixd file
+    #  Smart Store dir example:  _internal/db/bd/e3/14~676B2388-3181-4A73-BD1E-43F02EF050B4/guidSplunk-676B2388-3181-4A73-BD1E-43F02EF050B4/1668952678-1668520680-9018843933635107078.tsidx
+    #  Traditional dir example:  _internaldb/db/db_1674422056_1673990057_8/1674309022-1673990057-8288841824203874392.tsidx
     buckets=[]
     for root, dirs, files in os.walk(directory, topdown=True):
         for file in files:
@@ -57,9 +70,11 @@ def list_full_paths(directory,earliest,latest):
                 maxEpoch=fileParsed[0]
                 minEpoch=fileParsed[1]
                 dirName=root.split("/")[-1:] #strip the path and grab the bucket name
-                if earliest < int(minEpoch) and latest > int(maxEpoch) and "DISABLED" not in root and not dirName[0].startswith("rb_"):  # filter buckets if user passed min/max epoch times
-                    # Will assume everything is a bucket except for dir names that contain DISABLED or are cluster associated replicated buckets (tested for non-smartstore)
-                    buckets.append(root)
+                #if earliest < int(minEpoch) and latest > int(maxEpoch) and "DISABLED" not in root and not dirName[0].startswith("rb_"):  # filter buckets if user passed min/max epoch times
+                if not (latest <= int(minEpoch) or earliest >= int(maxEpoch)) and "DISABLED" not in root and not dirName[0].startswith("rb_") and not dirName[0].startswith("hot_"):  # filter buckets if user passed min/max epoch times
+                    # Will assume everything is a bucket except for dir names that contain DISABLED, are cluster associated replicated buckets (tested for non-smartstore), or hot buckets
+                    # For an on-prem config, we might find multiple tsidx files in an index.  Only grab the iunique parent directory containing these tsidx files once.
+                    if root not in buckets: buckets.append(root)
     return(buckets)
 
 def buildCmdList(buckets,args):
@@ -76,7 +91,6 @@ def buildCmdList(buckets,args):
             exporttoolCmd+="--ssl "
         exporttoolCmd+=args.remoteIP
         exporttoolCmd+=" "+args.remotePort
-        print(exporttoolCmd)
         cliCommands.append(exporttoolCmd)
         logging.info("exporttoolCmd: %s ",exporttoolCmd)
     return cliCommands
@@ -105,7 +119,8 @@ def main():
     args = getArgs(argvals)
     global logging
     logging=getLogger(args.logfile)
-    logging.info('\n------------\nStarting a new export using %i streams', args.numstreams)
+    logging.info("------------\nStart time: "+ datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    logging.info('Starting a new export using %i streams', args.numstreams)
     logging.info('Beginning Script with these args: %s',' '.join(f'{k}={v}' for k, v in vars(args).items()))
     startTime=time.time()
     buckets=(list_full_paths(args.directory,args.earliest,args.latest))
