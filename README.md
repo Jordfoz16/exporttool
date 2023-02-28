@@ -117,7 +117,9 @@ We don't care about indexing new data and we don't care about distributed search
 ## Cribl Stream Config
 You can get started instantly with Cribl Cloud or even using the Cribl Free [license option](https://docs.cribl.io/stream/licensing/) but keep in mind daily ingest limits (very generous) and # of cores (also very generous at 10) that can be used may factor into a full scale data export. If you choose to install Cribl Stream on-prem on in your own cloud, the [documentation](https://docs.cribl.io/stream/getting-started-guide) is your friend and will get you going quickly.
 
-Once you have satisfied the above requirements (CLI, nc, and firewall) on your Splunk indexers, grab the [scribl.py script from the github repo](https://github.com/criblio/scribl) and copy it over to each indexer.  The only thing in the script that is hard coded is the default install location of Splunk (/opt/splunk) which you can easily modify if you are running a non-default config.  Keep in mind that we are running the script directly on the Splunk indexers and a python binary is kept under $SPLUNK_HOME/bin.  
+Once you have satisfied the above requirements (CLI, nc, and firewall) on your Splunk indexers, grab the [scribl.py script from the github repo](https://github.com/criblio/scribl) and copy it over to each indexer.  The only thing in the script that is hard coded is the default install location of Splunk (/opt/splunk) which you can easily modify if you are running a non-default config.  Keep in mind that we are running the script directly on the Splunk indexers and a python binary is kept under $SPLUNK_HOME/bin. 
+
+The [github repo](https://github.com/criblio/scribl) also contains a [Cribl Pack for Scribl](https://github.com/criblio/scribl/blob/main/cribl-scribl.crbl) which contains a few sanity checks dealing with possible unexpected large events that exceed line breakers and a couple data transforms. Download the pack and load it upas described below.  
 
 Reference or download [this pdf document](https://github.com/criblio/scribl/blob/main/scribl-detailed-config.pdf) for detailed Cribl Stream configuration guidelines.
 
