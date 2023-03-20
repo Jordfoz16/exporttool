@@ -23,6 +23,7 @@
 #  -et Earliest epoch time for bucket selection
 #  -lt Latest epoch time for bucket selection
 #  -kv Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times.
+#  -b  Add the bucket=<bucketname> kv pair to the output
 #
 # Make sure nc (netcat) is in the path or hard code it below to fit your needs
 #
@@ -30,13 +31,15 @@
 #
 # What's New?
 #
-# Version 2.0.0 (Dec 2022)
+# Version 2.0.0 (Dec 2022) - Apger
 #   - The -d option now needs to point at the directory containing the index name instead of the bucket (from 1.0.0)
 #   - Splunk SmartStore is now supported
 #
-# Version 2.0.1 (Jan 2023)
+# Version 2.0.1 (Jan 2023) - Apger
 #   - skips hot buckets
 #   - fixed the filtering expression for selecting buckets based on earliest/latest time
+# Version 2.0.2 (Mar 2023) - Apger
+#   - Add the -b arg
 
 
 import argparse,os,subprocess,sys,time,logging,re,datetime
@@ -51,6 +54,7 @@ def getArgs(argv=None):
     parser.add_argument("-et","--earliest", default=0, type=int, help="Earliest epoch time for bucket selection")
     parser.add_argument("-lt","--latest", default=9999999999, type=int, help="Latest epoch time for bucket selection")
     parser.add_argument("-kv","--keyval", action='append', nargs='+', help="Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times")
+    parser.add_argument("-b","--bucketname", help="Add bucket=<bucketname> to the output",action='store_true')
     requiredNamed = parser.add_argument_group('required named arguments')
     requiredNamed.add_argument("-d","--directory", help="Source directory pointing at the index", required=True)
     requiredNamed.add_argument("-r","--remoteIP", help="Remote address to send the exported data to", required=True)
@@ -86,6 +90,9 @@ def buildCmdList(buckets,args):
                 result = re.search(r"..(.*)=(.*)..", str(pair))
                 kv="\""+result.group(1)+"::"+result.group(2)+"\""
                 exporttoolCmd+="|sed -e 's/^\([[:digit:]]\{10\},\)\(.*\)/\\1"+kv+",\\2/'"
+        if args.bucketname:
+            b="\"bucket::"+str(bucket.split("/")[-1:][0])+"\""  #grab the bucketname from the end of the filepath
+            exporttoolCmd+="|sed -e 's/^\([[:digit:]]\{10\},\)\(.*\)/\\1"+b+",\\2/'"  #stick bucket::<bucketname> right after the time
         exporttoolCmd+="| nc "
         if args.TLS:
             exporttoolCmd+="--ssl "
