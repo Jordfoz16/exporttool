@@ -34,12 +34,13 @@
 # Version 2.0.0 (Dec 2022) - Apger
 #   - The -d option now needs to point at the directory containing the index name instead of the bucket (from 1.0.0)
 #   - Splunk SmartStore is now supported
-#
 # Version 2.0.1 (Jan 2023) - Apger
 #   - skips hot buckets
 #   - fixed the filtering expression for selecting buckets based on earliest/latest time
 # Version 2.0.2 (Mar 2023) - Apger
 #   - Add the -b arg
+# Version 2.0.3 (Jun 2023) - Apger
+#   - update earliest/latest search
 
 
 import argparse,os,subprocess,sys,time,logging,re,datetime
@@ -74,8 +75,7 @@ def list_full_paths(directory,earliest,latest):
                 maxEpoch=fileParsed[0]
                 minEpoch=fileParsed[1]
                 dirName=root.split("/")[-1:] #strip the path and grab the bucket name
-                #if earliest < int(minEpoch) and latest > int(maxEpoch) and "DISABLED" not in root and not dirName[0].startswith("rb_"):  # filter buckets if user passed min/max epoch times
-                if not (latest <= int(minEpoch) or earliest >= int(maxEpoch)) and "DISABLED" not in root and not dirName[0].startswith("rb_") and not dirName[0].startswith("hot_"):  # filter buckets if user passed min/max epoch times
+                if earliest <= int(maxEpoch) and latest >= int(minEpoch) and "DISABLED" not in root and not dirName[0].startswith("rb_"):  # filter buckets if user passed min/max epoch times
                     # Will assume everything is a bucket except for dir names that contain DISABLED, are cluster associated replicated buckets (tested for non-smartstore), or hot buckets
                     # For an on-prem config, we might find multiple tsidx files in an index.  Only grab the iunique parent directory containing these tsidx files once.
                     if root not in buckets: buckets.append(root)
