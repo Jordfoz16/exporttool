@@ -1,4 +1,4 @@
-# scribl.py
+# exporttool.py
 
 Please reference this file in the repo for a detailed config guide:  https://github.com/Exporttool/exporttool/blob/main/scribl-detailed-config.pdf
 
