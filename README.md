@@ -1,6 +1,6 @@
 # scribl.py
 
-Please reference this file in the repo for a detailed config guide:  https://github.com/criblio/scribl/blob/main/scribl-detailed-config.pdf
+Please reference this file in the repo for a detailed config guide:  https://github.com/Exporttool/exporttool/blob/main/scribl-detailed-config.pdf
 
 Exporting Splunk Data at Scale with Scribl. This is a python script that can be run on each Splunk Indexer for the purpose of exporting historical bucket data (raw events + metadata) at scale by balancing the work across multiple CPUs then forwarding to Cribl.
 
