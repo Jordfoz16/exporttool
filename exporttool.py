@@ -8,9 +8,11 @@
 #   traditional, Smart Store, and frozen buckets
 #   skips cluster replicated and hot buckets
 #
-# Example:  scribl.py -d /opt/splunk/var/lib/splunk/bots/ -r 34.220.39.122 -p 20000 -t -n4 -l /tmp/scribl.log -et 1564819155 -lt 1566429310#
+# Example:  exporttool.py -d /opt/splunk/var/lib/splunk/bots/ -r 34.220.39.122 -p 20000 -t -n4 -l /tmp/scribl.log -et 1564819155 -lt 1566429310#
 #
-# Example:  scribl.py -d /opt/splunk/var/lib/splunk/bots/ -r 34.220.39.122 -p 20000 -l /tmp/scribl.log -kv index=test
+# Example:  exporttool.py -d /opt/splunk/var/lib/splunk/bots/ -r 34.220.39.122 -p 20000 -l /tmp/scribl.log -kv index=test
+#
+# Example:  exporttool.py -i -d buckets.txt -r 34.220.39.122 -p 20000 -l /tmp/scribl.log
 #
 # Required:
 #  -d  Source directory pointing at the index.
@@ -24,6 +26,7 @@
 #  -lt Latest epoch time for bucket selection
 #  -kv Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times.
 #  -b  Add the bucket=<bucketname> kv pair to the output
+#  -i  Import buckets from a file rather than crawl the provided directory
 #
 # Make sure nc (netcat) is in the path or hard code it below to fit your needs
 #
@@ -41,7 +44,8 @@
 #   - Add the -b arg
 # Version 2.0.3 (Jun 2023) - Apger
 #   - update earliest/latest search
-
+# Version 2.0.4 (Sept 2023) - Apger
+#   - add the ability to import bucket list from file
 
 import argparse,os,subprocess,sys,time,logging,re,datetime
 from multiprocessing import Pool
@@ -50,6 +54,7 @@ def getArgs(argv=None):
     parser = argparse.ArgumentParser(description="This is to be run on a Splunk Indexer for the purpose\
             of exporting buckets and streaming their contents to Cribl Stream")
     parser.add_argument("-t","--TLS", help="Send with TLS enabled", action='store_true')
+    parser.add_argument("-i","--importBuckets", help="Import buckets from a file (specifid by the -d arg) rather than crawl the provided directory", action='store_true')
     parser.add_argument("-n","--numstreams", default="1", type=int, help="Number of parallel stream to utilize")
     parser.add_argument("-l","--logfile", default="/tmp/SplunkToCribl.log", help="Location to write/append the logging")
     parser.add_argument("-et","--earliest", default=0, type=int, help="Earliest epoch time for bucket selection")
@@ -62,23 +67,35 @@ def getArgs(argv=None):
     requiredNamed.add_argument("-p","--remotePort", help="Remote TCP port to be used", required=True)
     return parser.parse_args(argv)
 
-def list_full_paths(directory,earliest,latest):
+def list_full_paths(directory,earliest,latest,importBuckets):
     #  We are accounting for directory structures specific to traditional on-prem and Smart Store
+    #  Use the -i arg is you are mounting a SmartStore directory (speed) or importing individual buckets
     #  The one thing common to them that contains min/maw epoch times is the .tsixd file
     #  Smart Store dir example:  _internal/db/bd/e3/14~676B2388-3181-4A73-BD1E-43F02EF050B4/guidSplunk-676B2388-3181-4A73-BD1E-43F02EF050B4/1668952678-1668520680-9018843933635107078.tsidx
     #  Traditional dir example:  _internaldb/db/db_1674422056_1673990057_8/1674309022-1673990057-8288841824203874392.tsidx
     buckets=[]
-    for root, dirs, files in os.walk(directory, topdown=True):
-        for file in files:
-            if "tsidx" in file: #We need to grab max/min epoch from tsidx since it's no longer in the bucket name with smartstore
-                fileParsed=file.split('-') # Grab max and min from file name
-                maxEpoch=fileParsed[0]
-                minEpoch=fileParsed[1]
-                dirName=root.split("/")[-1:] #strip the path and grab the bucket name
-                if earliest <= int(maxEpoch) and latest >= int(minEpoch) and "DISABLED" not in root and not dirName[0].startswith("rb_"):  # filter buckets if user passed min/max epoch times
-                    # Will assume everything is a bucket except for dir names that contain DISABLED, are cluster associated replicated buckets (tested for non-smartstore), or hot buckets
-                    # For an on-prem config, we might find multiple tsidx files in an index.  Only grab the iunique parent directory containing these tsidx files once.
-                    if root not in buckets: buckets.append(root)
+    files=[]
+    if importBuckets:
+        bucket_file = open(directory, "r")
+        for line in bucket_file:
+            if not line.startswith("#"):
+                files.append(line.strip())
+    else:
+        for root, dirs, filesInDir in os.walk(directory, topdown=True):
+            for file in filesInDir:
+                if "tsidx" in file:
+                    files.append(os.path.join(root, file))
+
+    # files[] contains the full paths, including the .tsidx filname
+    for file in files:
+        tsidx=file.split('/')[-1] # the tsidx filename less the path
+        maxEpoch=tsidx.split('-')[-3] # Grab max and min from file name
+        minEpoch=tsidx.split('-')[-2] # Grab max and min from file name
+        bucketName=file.split("/")[-2] #Grab the name of the bucket (parent dir for the tsidx filename)
+        if earliest <= int(maxEpoch) and latest >= int(minEpoch) and "DISABLED" not in file and not bucketName.startswith("rb_"):  # filter buckets if user passed min/max epoch times
+        # Will assume everything is a bucket except for dir names that contain DISABLED, are cluster associated replicated buckets (tested for non-smartstore), or hot buckets
+        # For an on-prem config, we might find multiple tsidx files in an index.  Only grab the iunique parent directory containing these tsidx files once.
+            buckets.append(re.sub('\/[^\/]+$', '', file))  #strip the .tsidx filename from the path to only include the parent dir
     return(buckets)
 
 def buildCmdList(buckets,args):
@@ -130,7 +147,7 @@ def main():
     logging.info('Starting a new export using %i streams', args.numstreams)
     logging.info('Beginning Script with these args: %s',' '.join(f'{k}={v}' for k, v in vars(args).items()))
     startTime=time.time()
-    buckets=(list_full_paths(args.directory,args.earliest,args.latest))
+    buckets=(list_full_paths(args.directory,args.earliest,args.latest,args.importBuckets))
     if args.earliest < args.latest:
         logging.info('Search Min epoch = %i and Max epoch = %i',args.earliest,args.latest)
     else:
