@@ -15,22 +15,21 @@
 # Example:  exporttool.py -i -d buckets.txt -r 34.220.39.122 -p 20000 -l /tmp/scribl.log
 #
 # Required:
-#  -d  Source directory pointing at the index.
-#  -r  Remote address to send the exported data to.  This should be your Cribl worker with a TCP listener opened up.
-#  -p  Remote TCP port to be used
+#  --directory  Source directory pointing at the index.
+#  --dest_host  Remote address to send the exported data to.  This should be your Cribl worker with a TCP listener opened up.
+#  --dest_port  Remote TCP port to be used
 # Optional:
-#  -t  Send with TLS enabled
-#  -n  Number of parallel stream to utilize
-#  -l  Location to write/append the logging
-#  -et Earliest epoch time for bucket selection
-#  -lt Latest epoch time for bucket selection
-#  -kv Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times.
-#  -b  Add the bucket=<bucketname> kv pair to the output
+#  --tls  Send with TLS enabled
+#  --num_streams  Number of parallel stream to utilize
+#  --logfile  Location to write/append the logging
+#  --earliest Earliest epoch time for bucket selection
+#  --latest Latest epoch time for bucket selection
+#  --keyval Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times.
+#  --bucket_name  Add the bucket=<bucket_name> kv pair to the output
 #  -i  Import buckets from a file rather than crawl the provided directory
 #
-# Make sure nc (netcat) is in the path or hard code it below to fit your needs
+# If you use the --keyval option, make sure your pipeline in Cribl Stream accounts for the new field(s)
 #
-# If you use the -kv option, make sure your pipeline in Cribl Stream accounts for the new field(s)
 #
 # What's New?
 #
@@ -47,63 +46,64 @@
 # Version 2.0.4 (Sept 2023) - Apger
 #   - add the ability to import bucket list from file
 # Version 2.1.0 (November 2023) - Brant
-#   - added asyncio and SSL functionality to eliminate the requirement for netcat
+#   - added native libraries to eliminate the requirement for netcat
 #   - added the ability to specify options in a configuration file (can be overridden on CLI)
 
 
 import argparse
-import configparser
-import os
+import tomllib
+import glob
 import subprocess
-import sys
+# import sys
 import time
 import logging
 import re
 import datetime
-# import io
-# import socket
+import socket
 import ssl
-import asyncio
-from asyncio import StreamWriter
 from multiprocessing import Pool
 
 def get_args(argv=None):
+    with open("config.toml", "rb") as con:
+        config = tomllib.load(con)
     parser = argparse.ArgumentParser(description="This is to be run on a Splunk Indexer for the purpose\
-            of exporting buckets and streaming their contents to Cribl Stream")
+            of exporting buckets and streaming their contents to tcp output")
     parser.add_argument("--tls", help="Send with TLS enabled", action='store_true')
     parser.add_argument("--import_buckets", help="Import buckets from a file (specifid by the -d arg) rather than crawl the provided directory", action='store_true')
-    parser.add_argument("--num_streams", default="1", type=int, help="Number of parallel streams to utilize")
-    parser.add_argument("--logfile", default="/tmp/SplunkToCribl.log", help="Location to write/append the logging")
-    parser.add_argument("--earliest", default=0, type=int, help="Earliest epoch time for bucket selection")
-    parser.add_argument("--latest", default=9999999999, type=int, help="Latest epoch time for bucket selection")
+    parser.add_argument("--num_streams", type=int, help="Number of parallel streams to utilize")
+    parser.add_argument("--logfile", help="Location to write/append the logging")
+    parser.add_argument("--earliest", type=int, help="Earliest epoch time for bucket selection")
+    parser.add_argument("--latest", type=int, help="Latest epoch time for bucket selection")
     parser.add_argument("--keyval", action='append', nargs='+', help="Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times")
-    parser.add_argument("--bucket_name", help="Add bucket=<bucketname> to the output",action='store_true')
-    requiredNamed = parser.add_argument_group('required named arguments')
-    requiredNamed.add_argument("-d","--directory", help="Source directory pointing at the index", required=True)
-    requiredNamed.add_argument("-r","--dest_host", help="Remote address to send the exported data to", required=True)
-    requiredNamed.add_argument("-p","--dest_port", help="Remote TCP port to be used", required=True)
+    parser.add_argument("--bucket_name", help="Add bucket=<bucket_name> to the output",action='store_true')
+    parser.add_argument("--directory", default=config['directory'], help="Source directory pointing at the index")
+    parser.add_argument("--dest_host", default=config['dest_host'], help="Remote address to send the exported data to")
+    parser.add_argument("--dest_port", default=config['dest_port'], help="Remote TCP port to be used")
+    parser.set_defaults(tls=config['tls'],\
+                        import_buckets=config['import_buckets'],\
+                        num_streams=config['num_streams'],\
+                        logfile=config['logfile'],\
+                        earliest=config['earliest'],\
+                        latest=config['latest'],\
+                        keyval=config['keyval'],\
+                        bucket_name=config['bucket_name'])
     return parser.parse_args(argv)
 
 def list_full_paths(directory,earliest,latest,import_buckets):
     #  We are accounting for directory structures specific to traditional on-prem and Smart Store
     #  Use the -i arg is you are mounting a SmartStore directory (speed) or importing individual buckets
-    #  The one thing common to them that contains min/maw epoch times is the .tsixd file
+    #  The one thing common to them that contains min/maw epoch times is the .tsidx file
     #  Smart Store dir example:  _internal/db/bd/e3/14~676B2388-3181-4A73-BD1E-43F02EF050B4/guidSplunk-676B2388-3181-4A73-BD1E-43F02EF050B4/1668952678-1668520680-9018843933635107078.tsidx
     #  Traditional dir example:  _internaldb/db/db_1674422056_1673990057_8/1674309022-1673990057-8288841824203874392.tsidx
-    buckets=[]
-    files=[]
-    if import_buckets:
-        bucket_file = open(directory, "r")
-        for line in bucket_file:
-            if not line.startswith("#"):
-                files.append(line.strip())
+    files = []
+    buckets = []
+    if len(import_buckets) > 0:
+        for line in import_buckets:
+            files.append(line.strip())
     else:
-        for root, dirs, filesInDir in os.walk(directory, topdown=True):
-            for file in filesInDir:
-                if "tsidx" in file:
-                    files.append(os.path.join(root, file))
+        files_to_process = glob.glob(f"{directory}/**/*.tsidx", recursive=True)
+        files = files_to_process
 
-    # files[] contains the full paths, including the .tsidx filname
     for file in files:
         tsidx=file.split('/')[-1] # the tsidx filename less the path
         max_epoch=tsidx.split('-')[-3] # Grab max and min from file name
@@ -116,24 +116,41 @@ def list_full_paths(directory,earliest,latest,import_buckets):
     return(buckets)
 
 
-async def send_data(dest_host, dest_port, command, use_tls):
-    if use_tls:
-        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        # ssl_context.load_cert_chain(certfile='your_cert.pem', keyfile='your_key.pem')
-    else:
-        ssl_context = None
-
-    reader, writer = await asyncio.open_connection(dest_host, dest_port, ssl=ssl_context)
-
+def send_data(dest_host, dest_port, command, use_tls):
     try:
-        async for record_line in run_cmd(command):
-            writer.write(record_line)
-            await writer.drain()
-    except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        writer.close()
-        await writer.wait_closed()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    except socket.error as e:
+        print(f"Error creating socket: {e}")
+        exit(1)
+
+    if use_tls:
+        try:
+            context = ssl.create_default_context()
+            secure_sock = context.wrap_socket(sock, server_hostname=dest_host)
+        except ssl.SSLError as e:
+            print(f"Error creating SSL/TLS socket: {e}")
+            sock.close()
+            exit(1)
+            
+        try:
+            # Connect to the server
+            secure_sock.connect((dest_host, dest_port))
+        except socket.error as e:
+            print(f"Error connecting to {dest_host}:{dest_port}: {e}")
+            secure_sock.close()
+            exit(1)
+
+        try:
+            xdata = run_cmd(command)
+            secure_sock.send(xdata,encoding="utf-8")
+        except socket.error as e:
+            print(f"Error sending data: {e}")
+    else:
+        try:
+            xdata = run_cmd(command)
+            sock.send(xdata,encoding="utf-8")
+        except socket.error as e:
+            print(f"Error sending data: {e}")
 
 
 def build_cmd_list(buckets,args):
@@ -145,14 +162,9 @@ def build_cmd_list(buckets,args):
                 result = re.search(r"..(.*)=(.*)..", str(pair))
                 kv="\{result.group(1)}::{result.group(2)}\\"
                 exporttool_cmd+="|sed -e 's/^\([[:digit:]]\{10\},\)\(.*\)/\\1"+kv+",\\2/'"
-        if args.bucketname:
-            b="\"bucket::"+str(bucket.split("/")[-1:][0])+"\""  #grab the bucketname from the end of the filepath
-            exporttool_cmd+="|sed -e 's/^\([[:digit:]]\{10\},\)\(.*\)/\\1"+b+",\\2/'"  #stick bucket::<bucketname> right after the time
-        # exporttool_cmd+="| nc "
-        # if args.TLS:
-        #     exporttool_cmd+="--ssl "
-        # exporttool_cmd+=args.remoteIP
-        # exporttool_cmd+=" "+args.remotePort
+        if args.bucket_name:
+            b="\"bucket::"+str(bucket.split("/")[-1:][0])+"\""  #grab the bucket_name from the end of the filepath
+            exporttool_cmd+="|sed -e 's/^\([[:digit:]]\{10\},\)\(.*\)/\\1"+b+",\\2/'"  #stick bucket::<bucket_name> right after the time
         cli_commands.append(exporttool_cmd)
         logging.info("exporttool_cmd: %s ",exporttool_cmd)
     return cli_commands
@@ -166,8 +178,6 @@ def run_cmd(cmd):
                 break
             if out != '':
                 yield out
-                # sys.stdout.write(out)
-                # sys.stdout.flush()
         logging.info("Finished in %s seconds: %s ",time.time()-start_time,cmd)
 
 def get_logger(name):
@@ -178,10 +188,7 @@ def get_logger(name):
     return logger
 
 def main():
-    config = configparser.ConfigParser()
-    config.read('config.ini')
-    arg_vals = None
-    args = get_args(arg_vals)
+    args = get_args()
     global logging
     logging=get_logger(args.logfile)
     logging.info("------------\nStart time: "+ datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -199,7 +206,7 @@ def main():
     cli_commands=build_cmd_list(buckets,args)
     for cmd in cli_commands:
         with Pool(args.num_streams) as p:
-            p.map(send_data(dest_host=args.dest_host, dest_port=args.dest_port, command=cmd, use_tls=args.tls))
+            p.map(send_data(dest_host=args.dest_host, dest_port=args.dest_port, command=cmd, use_tls=args.tls), range(args.num_streams))
     logging.info('Done with script in %s seconds',time.time()-start_time)
 
 if __name__ == "__main__":

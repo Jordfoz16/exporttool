@@ -1,0 +1,11 @@
+directory = "/opt/splunk/var/lib/splunk/suricata/"  # required
+dest_host = "route-host"                            # required
+dest_port = 10065                                   # required
+tls = false                                         
+import_buckets = []                                 # add full paths as a list
+num_streams = 1
+logfile = "/tmp/splunk_to_tcp.log"
+earliest = 0
+latest = 9999999999
+keyval = []
+bucket_name = false
