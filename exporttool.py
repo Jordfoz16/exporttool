@@ -53,8 +53,8 @@
 import argparse
 import tomllib
 import glob
-import subprocess
-# import sys
+from subprocess import Popen, PIPE, STDOUT
+# import io
 import time
 import logging
 import re
@@ -116,7 +116,8 @@ def list_full_paths(directory,earliest,latest,import_buckets):
     return(buckets)
 
 
-def send_data(dest_host, dest_port, command, use_tls):
+def run_cmd_send_data(command):
+
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     except socket.error as e:
@@ -135,22 +136,29 @@ def send_data(dest_host, dest_port, command, use_tls):
         try:
             # Connect to the server
             secure_sock.connect((dest_host, dest_port))
+            net_connect = secure_sock
         except socket.error as e:
             print(f"Error connecting to {dest_host}:{dest_port}: {e}")
             secure_sock.close()
             exit(1)
 
-        try:
-            xdata = run_cmd(command)
-            secure_sock.send(xdata,encoding="utf-8")
-        except socket.error as e:
-            print(f"Error sending data: {e}")
     else:
-        try:
-            xdata = run_cmd(command)
-            sock.send(xdata,encoding="utf-8")
-        except socket.error as e:
-            print(f"Error sending data: {e}")
+        sock.connect((dest_host, dest_port))
+        net_connect = sock
+
+    start_time=time.time()
+    
+    try:
+        process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
+        with net_connect, process.stdout:
+            for line in iter(process.stdout.readline, "\n"):
+                net_connect.sendall(line.encode('utf-8'))
+    
+    except Exception as e:
+        print(f"Error running process: {str(e)}")
+
+    # net_connect.close()
+    logging.info("Finished in %s seconds: %s ",time.time()-start_time,command)
 
 
 def build_cmd_list(buckets,args):
@@ -169,17 +177,6 @@ def build_cmd_list(buckets,args):
         logging.info("exporttool_cmd: %s ",exporttool_cmd)
     return cli_commands
 
-def run_cmd(cmd):
-        start_time=time.time()
-        p = subprocess.Popen(cmd,  shell=True, encoding='utf-8',stderr=subprocess.PIPE)
-        while True:
-            out = p.stderr.read(1)
-            if out == '' and p.poll() != None:
-                break
-            if out != '':
-                yield out
-        logging.info("Finished in %s seconds: %s ",time.time()-start_time,cmd)
-
 def get_logger(name):
     logger = logging.Logger(name)
     logger.setLevel(logging.DEBUG)
@@ -190,6 +187,12 @@ def get_logger(name):
 def main():
     args = get_args()
     global logging
+    global dest_host
+    global dest_port
+    global use_tls
+    dest_host = args.dest_host
+    dest_port = args.dest_port
+    use_tls = args.tls
     logging=get_logger(args.logfile)
     logging.info("------------\nStart time: "+ datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     logging.info('Starting a new export using %i streams', args.num_streams)
@@ -203,10 +206,10 @@ def main():
         exit(1)
     logging.info('There are %s buckets in this directory that match the search criteria',len(buckets))
     logging.info('Exporting these buckets: %s',buckets)
-    cli_commands=build_cmd_list(buckets,args)
+    cli_commands=build_cmd_list(buckets, args)
     for cmd in cli_commands:
-        with Pool(args.num_streams) as p:
-            p.map(send_data(dest_host=args.dest_host, dest_port=args.dest_port, command=cmd, use_tls=args.tls), range(args.num_streams))
+        with Pool(args.num_streams) as pyool:
+            pyool.map(run_cmd_send_data, cli_commands)
     logging.info('Done with script in %s seconds',time.time()-start_time)
 
 if __name__ == "__main__":
