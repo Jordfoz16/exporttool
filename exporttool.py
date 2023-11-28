@@ -48,13 +48,15 @@
 # Version 2.1.0 (November 2023) - Brant
 #   - added native libraries to eliminate the requirement for netcat
 #   - added the ability to specify options in a configuration file (can be overridden on CLI)
+# Version 2.1.1 (November 2023) - Brant
+#   - replace tomllib requirement for configuration file
+#   - added option for output to compressed text file
 
 
 import argparse
-import tomllib
 import glob
+import gzip
 from subprocess import Popen, PIPE, STDOUT
-# import io
 import time
 import logging
 import re
@@ -64,8 +66,12 @@ import ssl
 from multiprocessing import Pool
 
 def get_args(argv=None):
-    with open("config.toml", "rb") as con:
-        config = tomllib.load(con)
+    try:
+        from et_options import et_options
+    except ImportError:
+        print("Configuration values are kept in et_options.py, please add them there!")
+        raise
+
     parser = argparse.ArgumentParser(description="This is to be run on a Splunk Indexer for the purpose\
             of exporting buckets and streaming their contents to tcp output")
     parser.add_argument("--tls", help="Send with TLS enabled", action='store_true')
@@ -76,17 +82,22 @@ def get_args(argv=None):
     parser.add_argument("--latest", type=int, help="Latest epoch time for bucket selection")
     parser.add_argument("--keyval", action='append', nargs='+', help="Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times")
     parser.add_argument("--bucket_name", help="Add bucket=<bucket_name> to the output",action='store_true')
-    parser.add_argument("--directory", default=config['directory'], help="Source directory pointing at the index")
-    parser.add_argument("--dest_host", default=config['dest_host'], help="Remote address to send the exported data to")
-    parser.add_argument("--dest_port", default=config['dest_port'], help="Remote TCP port to be used")
-    parser.set_defaults(tls=config['tls'],\
-                        import_buckets=config['import_buckets'],\
-                        num_streams=config['num_streams'],\
-                        logfile=config['logfile'],\
-                        earliest=config['earliest'],\
-                        latest=config['latest'],\
-                        keyval=config['keyval'],\
-                        bucket_name=config['bucket_name'])
+    parser.add_argument("--directory", default=et_options['directory'], help="Source directory pointing at the index")
+    parser.add_argument("--dest_host", default=et_options['dest_host'], help="Remote address to send the exported data to")
+    parser.add_argument("--dest_port", default=et_options['dest_port'], help="Remote TCP port to be used")
+    parser.add_argument("--file_out", default=et_options['file_out'], help="True/False on writing to file instead of network")
+    parser.add_argument("--gzip_file", default=et_options['gzip_file'], help="compress output file (file_out must be True)")
+    parser.set_defaults(tls=et_options['tls'],\
+                        import_buckets=et_options['import_buckets'],\
+                        num_streams=et_options['num_streams'],\
+                        logfile=et_options['logfile'],\
+                        earliest=et_options['earliest'],\
+                        latest=et_options['latest'],\
+                        keyval=et_options['keyval'],\
+                        bucket_name=et_options['bucket_name'],\
+                        file_out = et_options['file_out'],\
+                        file_out_path = et_options['file_out_path'],\
+                        gzip_file = et_options['gzip_file'])
     return parser.parse_args(argv)
 
 def list_full_paths(directory,earliest,latest,import_buckets):
@@ -109,7 +120,7 @@ def list_full_paths(directory,earliest,latest,import_buckets):
         max_epoch=tsidx.split('-')[-3] # Grab max and min from file name
         min_epoch=tsidx.split('-')[-2] # Grab max and min from file name
         bucketName=file.split("/")[-2] #Grab the name of the bucket (parent dir for the tsidx filename)
-        if earliest <= int(max_epoch) and latest >= int(min_epoch) and "DISABLED" not in file and not bucketName.startswith("rb_"):  # filter buckets if user passed min/max epoch times
+        if earliest <= int(max_epoch) and latest >= int(min_epoch) and "DISABLED" not in file and not bucketName.startswith("rb_") and not bucketName.startswith("hot"):  # filter buckets if user passed min/max epoch times
         # Will assume everything is a bucket except for dir names that contain DISABLED, are cluster associated replicated buckets (tested for non-smartstore), or hot buckets
         # For an on-prem config, we might find multiple tsidx files in an index.  Only grab the iunique parent directory containing these tsidx files once.
             buckets.append(re.sub('\/[^\/]+$', '', file))  #strip the .tsidx filename from the path to only include the parent dir
@@ -117,48 +128,72 @@ def list_full_paths(directory,earliest,latest,import_buckets):
 
 
 def run_cmd_send_data(command):
-
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    except socket.error as e:
-        print(f"Error creating socket: {e}")
-        exit(1)
-
-    if use_tls:
-        try:
-            context = ssl.create_default_context()
-            secure_sock = context.wrap_socket(sock, server_hostname=dest_host)
-        except ssl.SSLError as e:
-            print(f"Error creating SSL/TLS socket: {e}")
-            sock.close()
-            exit(1)
+    if file_out:
+        if gzip_file:
+            try:
+                process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
+                filename = file_out_path + command.split()[3].split('/')[-1] + '.csv.gz'
+                with gzip.open(filename, 'wt', encoding='utf-8') as file:
+                    for line in iter(process.stdout.readline, "\n"):
+                        file.write(line)
+            except Exception as e:
+                print(f"Error running process: {str(e)}")
+        else:
+            try:
+                process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
+                filename = file_out_path + command.split()[3].split('/')[-1] + '.csv'
+                with open(filename, 'wt', encoding='utf-8') as file:
+                    for line in iter(process.stdout.readline, "\n"):
+                        file.write(line)
+            except Exception as e:
+                print(f"Error running process: {str(e)}")
             
+    else:
         try:
-            # Connect to the server
-            secure_sock.connect((dest_host, dest_port))
-            net_connect = secure_sock
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         except socket.error as e:
-            print(f"Error connecting to {dest_host}:{dest_port}: {e}")
-            secure_sock.close()
+            print(f"Error creating socket: {e}")
             exit(1)
 
-    else:
-        sock.connect((dest_host, dest_port))
-        net_connect = sock
+        if use_tls:
+            try:
+                context = ssl.create_default_context()
+                secure_sock = context.wrap_socket(sock, server_hostname=dest_host)
+            except ssl.SSLError as e:
+                print(f"Error creating SSL/TLS socket: {e}")
+                sock.close()
+                exit(1)
 
-    start_time=time.time()
-    
-    try:
-        process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
-        with net_connect, process.stdout:
-            for line in iter(process.stdout.readline, "\n"):
-                net_connect.sendall(line.encode('utf-8'))
-    
-    except Exception as e:
-        print(f"Error running process: {str(e)}")
+            try:
+                # Connect to the server
+                secure_sock.connect((dest_host, dest_port))
+                net_connect = secure_sock
+            except socket.error as e:
+                print(f"Error connecting to {dest_host}:{dest_port}: {e}")
+                secure_sock.close()
+                exit(1)
 
-    # net_connect.close()
+        else:
+            sock.connect((dest_host, dest_port))
+            net_connect = sock
+
+        start_time=time.time()
+
+        try:
+            process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
+            with net_connect, process.stdout:
+                for line in iter(process.stdout.readline, "\n"):
+                    net_connect.sendall(line.encode('utf-8'))
+
+        except Exception as e:
+            print(f"Error running process: {str(e)}")
+
+    file.close()
+    net_connect.close()
     logging.info("Finished in %s seconds: %s ",time.time()-start_time,command)
+    
+def file_output(command):
+    pass
 
 
 def build_cmd_list(buckets,args):
@@ -177,6 +212,7 @@ def build_cmd_list(buckets,args):
         logging.info("exporttool_cmd: %s ",exporttool_cmd)
     return cli_commands
 
+
 def get_logger(name):
     logger = logging.Logger(name)
     logger.setLevel(logging.DEBUG)
@@ -184,15 +220,22 @@ def get_logger(name):
     logger.addHandler(handler)
     return logger
 
+
 def main():
     args = get_args()
     global logging
     global dest_host
     global dest_port
     global use_tls
+    global file_out
+    global file_out_path
+    global gzip_file
     dest_host = args.dest_host
     dest_port = args.dest_port
     use_tls = args.tls
+    file_out = args.file_out
+    file_out_path = args.file_out_path
+    gzip_file = args.gzip_file
     logging=get_logger(args.logfile)
     logging.info("------------\nStart time: "+ datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     logging.info('Starting a new export using %i streams', args.num_streams)
@@ -211,6 +254,7 @@ def main():
         with Pool(args.num_streams) as pyool:
             pyool.map(run_cmd_send_data, cli_commands)
     logging.info('Done with script in %s seconds',time.time()-start_time)
+
 
 if __name__ == "__main__":
     main()
