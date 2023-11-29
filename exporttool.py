@@ -50,12 +50,11 @@
 #   - added the ability to specify options in a configuration file (can be overridden on CLI)
 # Version 2.1.1 (November 2023) - Brant
 #   - replace tomllib requirement for configuration file
-#   - added option for output to compressed text file
+#   - added option for output to csv (text) file
 
 
 import argparse
 import glob
-import gzip
 from subprocess import Popen, PIPE, STDOUT
 import time
 import logging
@@ -124,30 +123,18 @@ def list_full_paths(directory,earliest,latest,import_buckets):
         # Will assume everything is a bucket except for dir names that contain DISABLED, are cluster associated replicated buckets (tested for non-smartstore), or hot buckets
         # For an on-prem config, we might find multiple tsidx files in an index.  Only grab the iunique parent directory containing these tsidx files once.
             buckets.append(re.sub('\/[^\/]+$', '', file))  #strip the .tsidx filename from the path to only include the parent dir
-    return(buckets)
+    return(set(buckets))
 
 
 def run_cmd_send_data(command):
+    start_time=time.time()
     if file_out:
-        if gzip_file:
-            try:
-                process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
-                filename = file_out_path + command.split()[3].split('/')[-1] + '.csv.gz'
-                with gzip.open(filename, 'wt', encoding='utf-8') as file:
-                    for line in iter(process.stdout.readline, "\n"):
-                        file.write(line)
-            except Exception as e:
-                print(f"Error running process: {str(e)}")
-        else:
-            try:
-                process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
-                filename = file_out_path + command.split()[3].split('/')[-1] + '.csv'
-                with open(filename, 'wt', encoding='utf-8') as file:
-                    for line in iter(process.stdout.readline, "\n"):
-                        file.write(line)
-            except Exception as e:
-                print(f"Error running process: {str(e)}")
-            
+        file_out_name = file_out_path + command.split()[3].split('/')[-1] + '.csv'
+        file_out_command = command.split()
+        file_out_command[4] = file_out_name
+        file_out_command = ' '.join(file_out_command)
+        file_output(file_out_command)
+
     else:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -177,7 +164,6 @@ def run_cmd_send_data(command):
             sock.connect((dest_host, dest_port))
             net_connect = sock
 
-        start_time=time.time()
 
         try:
             process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
@@ -188,12 +174,17 @@ def run_cmd_send_data(command):
         except Exception as e:
             print(f"Error running process: {str(e)}")
 
-    file.close()
-    net_connect.close()
-    logging.info("Finished in %s seconds: %s ",time.time()-start_time,command)
+        net_connect.close()
+    logging.info(f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}")
+    print(f"completed processing: {command.split()[3]}")
+    
     
 def file_output(command):
-    pass
+    try:
+        process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
+        process.wait()
+    except Exception as e:
+        print(f"Error running process: {str(e)}")
 
 
 def build_cmd_list(buckets,args):
@@ -209,7 +200,7 @@ def build_cmd_list(buckets,args):
             b="\"bucket::"+str(bucket.split("/")[-1:][0])+"\""  #grab the bucket_name from the end of the filepath
             exporttool_cmd+="|sed -e 's/^\([[:digit:]]\{10\},\)\(.*\)/\\1"+b+",\\2/'"  #stick bucket::<bucket_name> right after the time
         cli_commands.append(exporttool_cmd)
-        logging.info("exporttool_cmd: %s ",exporttool_cmd)
+        logging.info(f"exporttool_cmd: {exporttool_cmd}")
     return cli_commands
 
 
@@ -237,23 +228,31 @@ def main():
     file_out_path = args.file_out_path
     gzip_file = args.gzip_file
     logging=get_logger(args.logfile)
-    logging.info("------------\nStart time: "+ datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    logging.info('Starting a new export using %i streams', args.num_streams)
+    logging.info(f"------------\nStart time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logging.info(f"Starting a new export using {args.num_streams} streams")
     logging.info('Beginning Script with these args: %s',' '.join(f'{k}={v}' for k, v in vars(args).items()))
     start_time=time.time()
     buckets=(list_full_paths(args.directory,args.earliest,args.latest,args.import_buckets))
     if args.earliest < args.latest:
-        logging.info('Search Min epoch = %i and Max epoch = %i',args.earliest,args.latest)
+        logging.info(f"Search Min epoch = {args.earliest} and Max epoch = {args.latest}")
     else:
-        logging.error('ERROR:  The specified Min epoch time (%i) must be less than the specified Max epoch time(%i)',args.earliest,args.latest)
+        logging.error(f"ERROR:  The specified Min epoch time ({args.earliest}) must be less than the specified Max epoch time({args.latest})")
         exit(1)
-    logging.info('There are %s buckets in this directory that match the search criteria',len(buckets))
-    logging.info('Exporting these buckets: %s',buckets)
+    logging.info(f"There are {len(buckets)} buckets in this directory that match the search criteria")
+    logging.info(f"Exporting the following buckets:")
+    for b in buckets:
+        logging.info(b)
     cli_commands=build_cmd_list(buckets, args)
-    for cmd in cli_commands:
-        with Pool(args.num_streams) as pyool:
-            pyool.map(run_cmd_send_data, cli_commands)
-    logging.info('Done with script in %s seconds',time.time()-start_time)
+    print("-"*25)
+    print(f"processing {len(cli_commands)} index files")
+    print("-"*25)
+    for proc in cli_commands:
+        print(proc)
+    print("-"*25)
+    with Pool(args.num_streams) as pyool:
+        pyool.map(run_cmd_send_data, cli_commands)
+    proc_time = time.time() - start_time
+    logging.info(f"Completed script in {str(datetime.timedelta(seconds=proc_time))}")
 
 
 if __name__ == "__main__":
