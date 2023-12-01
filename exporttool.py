@@ -85,7 +85,6 @@ def get_args(argv=None):
     parser.add_argument("--dest_host", default=et_options['dest_host'], help="Remote address to send the exported data to")
     parser.add_argument("--dest_port", default=et_options['dest_port'], help="Remote TCP port to be used")
     parser.add_argument("--file_out", default=et_options['file_out'], help="True/False on writing to file instead of network")
-    parser.add_argument("--gzip_file", default=et_options['gzip_file'], help="compress output file (file_out must be True)")
     parser.set_defaults(tls=et_options['tls'],\
                         import_buckets=et_options['import_buckets'],\
                         num_streams=et_options['num_streams'],\
@@ -95,8 +94,7 @@ def get_args(argv=None):
                         keyval=et_options['keyval'],\
                         bucket_name=et_options['bucket_name'],\
                         file_out = et_options['file_out'],\
-                        file_out_path = et_options['file_out_path'],\
-                        gzip_file = et_options['gzip_file'])
+                        file_out_path = et_options['file_out_path'])
     return parser.parse_args(argv)
 
 def list_full_paths(directory,earliest,latest,import_buckets):
@@ -134,47 +132,9 @@ def run_cmd_send_data(command):
         file_out_command[4] = file_out_name
         file_out_command = ' '.join(file_out_command)
         file_output(file_out_command)
-
     else:
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        except socket.error as e:
-            print(f"Error creating socket: {e}")
-            exit(1)
+        net_output(command)
 
-        if use_tls:
-            try:
-                context = ssl.create_default_context()
-                secure_sock = context.wrap_socket(sock, server_hostname=dest_host)
-            except ssl.SSLError as e:
-                print(f"Error creating SSL/TLS socket: {e}")
-                sock.close()
-                exit(1)
-
-            try:
-                # Connect to the server
-                secure_sock.connect((dest_host, dest_port))
-                net_connect = secure_sock
-            except socket.error as e:
-                print(f"Error connecting to {dest_host}:{dest_port}: {e}")
-                secure_sock.close()
-                exit(1)
-
-        else:
-            sock.connect((dest_host, dest_port))
-            net_connect = sock
-
-
-        try:
-            process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
-            with net_connect, process.stdout:
-                for line in iter(process.stdout.readline, "\n"):
-                    net_connect.sendall(line.encode('utf-8'))
-
-        except Exception as e:
-            print(f"Error running process: {str(e)}")
-
-        net_connect.close()
     logging.info(f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}")
     print(f"completed processing: {command.split()[3]}")
     
@@ -185,6 +145,51 @@ def file_output(command):
         process.wait()
     except Exception as e:
         print(f"Error running process: {str(e)}")
+        
+
+def net_output(command):
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        if use_tls:
+            context = ssl.create_default_context()
+            secure_sock = context.wrap_socket(sock, server_hostname=dest_host)
+            net_connect = secure_sock
+        else:
+            net_connect = sock
+
+        try:
+            net_connect.connect((dest_host, dest_port))
+            process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
+
+            with net_connect, process.stdout:
+                try:
+                    for line in iter(process.stdout.readline, ""):
+                        net_connect.sendall(line.encode('utf-8'))
+
+                except Exception as e:
+                    print(f"Error running process: {str(e)}")
+                finally:
+                    if use_tls:
+                        secure_sock.close()
+                    sock.close()
+
+#                while True:
+#                    out = process.stdout.read(1)
+#                    if out == '' and process.poll() is not None:
+#                        break
+#                    if out != '':
+#                        net_connect.send(out.encode('utf-8'))
+
+        except socket.error as e:
+            print(f"Error connecting to {dest_host}:{dest_port}: {e}")
+        except Exception as e:
+            print(f"Error running process: {str(e)}")
+
+    finally:
+        if use_tls:
+            secure_sock.close()
+        sock.close()
 
 
 def build_cmd_list(buckets,args):
@@ -220,13 +225,11 @@ def main():
     global use_tls
     global file_out
     global file_out_path
-    global gzip_file
     dest_host = args.dest_host
     dest_port = args.dest_port
     use_tls = args.tls
     file_out = args.file_out
     file_out_path = args.file_out_path
-    gzip_file = args.gzip_file
     logging=get_logger(args.logfile)
     logging.info(f"------------\nStart time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logging.info(f"Starting a new export using {args.num_streams} streams")
