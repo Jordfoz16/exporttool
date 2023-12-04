@@ -97,6 +97,7 @@ def get_args(argv=None):
                         file_out_path = et_options['file_out_path'])
     return parser.parse_args(argv)
 
+
 def list_full_paths(directory,earliest,latest,import_buckets):
     #  We are accounting for directory structures specific to traditional on-prem and Smart Store
     #  Use the -i arg is you are mounting a SmartStore directory (speed) or importing individual buckets
@@ -154,42 +155,44 @@ def net_output(command):
         if use_tls:
             context = ssl.create_default_context()
             secure_sock = context.wrap_socket(sock, server_hostname=dest_host)
+
+            try:
+                secure_sock.connect((dest_host, dest_port))
+            except (socket.error, ssl.SSLError) as e:
+                print(f"Error connecting to {dest_host}:{dest_port} with TLS: {e}")
+                return
+
             net_connect = secure_sock
         else:
+            try:
+                sock.connect((dest_host, dest_port))
+            except socket.error as e:
+                print(f"Error connecting to {dest_host}:{dest_port}: {e}")
+                return
+
             net_connect = sock
 
         try:
-            net_connect.connect((dest_host, dest_port))
             process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
 
             with net_connect, process.stdout:
-                try:
-                    for line in iter(process.stdout.readline, ""):
-                        net_connect.sendall(line.encode('utf-8'))
+                while True:
+                    line = process.stdout.readline()
+                    if not line:
+                        break
+                    net_connect.send(line.encode('utf-8'))
 
-                except Exception as e:
-                    print(f"Error running process: {str(e)}")
-                finally:
-                    if use_tls:
-                        secure_sock.close()
-                    sock.close()
-
-#                while True:
-#                    out = process.stdout.read(1)
-#                    if out == '' and process.poll() is not None:
-#                        break
-#                    if out != '':
-#                        net_connect.send(out.encode('utf-8'))
 
         except socket.error as e:
-            print(f"Error connecting to {dest_host}:{dest_port}: {e}")
+            print(f"Error sending data over the socket: {e}")
         except Exception as e:
             print(f"Error running process: {str(e)}")
 
     finally:
         if use_tls:
             secure_sock.close()
-        sock.close()
+        else:
+            sock.close()
 
 
 def build_cmd_list(buckets,args):
