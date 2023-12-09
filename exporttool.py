@@ -70,7 +70,6 @@ def get_args(argv=None):
     except ImportError:
         print("Configuration values are kept in et_options.py, please add them there!")
         raise
-
     parser = argparse.ArgumentParser(description="This is to be run on a Splunk Indexer for the purpose\
             of exporting buckets and streaming their contents to tcp output")
     parser.add_argument("--tls", help="Send with TLS enabled", action='store_true')
@@ -112,7 +111,6 @@ def list_full_paths(directory,earliest,latest,import_buckets):
     else:
         files_to_process = glob.glob(f"{directory}/**/*.tsidx", recursive=True)
         files = files_to_process
-
     for file in files:
         tsidx=file.split('/')[-1] # the tsidx filename less the path
         max_epoch=tsidx.split('-')[-3] # Grab max and min from file name
@@ -122,7 +120,7 @@ def list_full_paths(directory,earliest,latest,import_buckets):
         # Will assume everything is a bucket except for dir names that contain DISABLED, are cluster associated replicated buckets (tested for non-smartstore), or hot buckets
         # For an on-prem config, we might find multiple tsidx files in an index.  Only grab the iunique parent directory containing these tsidx files once.
             buckets.append(re.sub('\/[^\/]+$', '', file))  #strip the .tsidx filename from the path to only include the parent dir
-    return(set(buckets))
+    return set(buckets)
 
 
 def run_cmd_send_data(command):
@@ -135,7 +133,6 @@ def run_cmd_send_data(command):
         file_output(file_out_command)
     else:
         net_output(command)
-
     logging.info(f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}")
     print(f"completed processing: {command.split()[3]}")
     
@@ -151,17 +148,16 @@ def file_output(command):
 def net_output(command):
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
         if use_tls:
             context = ssl.create_default_context()
+            context.verify_mode = ssl.CERT_NONE
+            context.check_hostname = False
             secure_sock = context.wrap_socket(sock, server_hostname=dest_host)
-
             try:
                 secure_sock.connect((dest_host, dest_port))
             except (socket.error, ssl.SSLError) as e:
                 print(f"Error connecting to {dest_host}:{dest_port} with TLS: {e}")
                 return
-
             net_connect = secure_sock
         else:
             try:
@@ -169,25 +165,28 @@ def net_output(command):
             except socket.error as e:
                 print(f"Error connecting to {dest_host}:{dest_port}: {e}")
                 return
-
             net_connect = sock
-
         try:
-            process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
-
+            process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True, encoding='ISO-8859-1')
+            current_rec = ""
             with net_connect, process.stdout:
                 while True:
                     line = process.stdout.readline()
                     if not line:
                         break
-                    net_connect.send(line.encode('utf-8'))
-
-
+                    if header in line:
+                        continue
+                    if "punct" in line:
+                        current_rec += line
+                        net_connect.send(current_rec.encode('utf-8'))
+                        current_rec = ""
+                    else:
+                        current_rec += line
         except socket.error as e:
             print(f"Error sending data over the socket: {e}")
         except Exception as e:
             print(f"Error running process: {str(e)}")
-
+            print(line)
     finally:
         if use_tls:
             secure_sock.close()
@@ -222,12 +221,14 @@ def get_logger(name):
 
 def main():
     args = get_args()
+    global header
     global logging
     global dest_host
     global dest_port
     global use_tls
     global file_out
     global file_out_path
+    header = '"_time",source,host,sourcetype,"_raw","_meta"'
     dest_host = args.dest_host
     dest_port = args.dest_port
     use_tls = args.tls
