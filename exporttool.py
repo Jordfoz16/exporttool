@@ -167,7 +167,7 @@ def net_output(command):
                 return
             net_connect = sock
         try:
-            process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True, encoding='ISO-8859-1')
+            process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True, encoding='latin-1')
             current_rec = ""
             with net_connect, process.stdout:
                 while True:
@@ -178,7 +178,9 @@ def net_output(command):
                         continue
                     if "punct" in line:
                         current_rec += line
-                        net_connect.send(current_rec.encode('utf-8'))
+                        net_connect.send(current_rec.encode('latin-1'))
+                        # print(current_rec.encode('latin-1'))
+                        # print('-'*35)
                         current_rec = ""
                     else:
                         current_rec += line
@@ -186,7 +188,6 @@ def net_output(command):
             print(f"Error sending data over the socket: {e}")
         except Exception as e:
             print(f"Error running process: {str(e)}")
-            print(line)
     finally:
         if use_tls:
             secure_sock.close()
