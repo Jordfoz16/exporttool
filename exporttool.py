@@ -51,6 +51,9 @@
 # Version 2.1.1 (November 2023) - Brant
 #   - replace tomllib requirement for configuration file
 #   - added option for output to csv (text) file
+# Version 2.1.2 (December 2023) - Brant
+#   - convert output format to JSON
+#   - try to guess encoding type (chardet)
 
 
 import argparse
@@ -62,6 +65,8 @@ import re
 import datetime
 import socket
 import ssl
+import json
+import chardet
 from multiprocessing import Pool
 
 def get_args(argv=None):
@@ -174,13 +179,19 @@ def net_output(command):
                     line = process.stdout.readline()
                     if not line:
                         break
-                    if header in line:
+                    if header in line or 'log-cmdline.cfg' in line:
                         continue
                     if "punct" in line:
                         current_rec += line
-                        net_connect.send(current_rec.encode('latin-1'))
-                        # print(current_rec.encode('latin-1'))
-                        # print('-'*35)
+                        record_split=re.search(r"^(\d+)..source::(.*?)\",\"host::(.*?)\",\"sourcetype::(.*?)\",\"(.*?)\",\"_indextime::",current_rec)
+                        dict_record={}
+                        dict_record['time']=record_split.group(1)
+                        dict_record['source']=record_split.group(2)
+                        dict_record['host']=record_split.group(3)
+                        dict_record['sourcetype']=record_split.group(4)
+                        dict_record['raw']=record_split.group(5)
+                        json_record = json.dumps(dict_record)
+                        net_connect.send(json_record.encode('latin-1'))
                         current_rec = ""
                     else:
                         current_rec += line
@@ -261,7 +272,9 @@ def main():
         pyool.map(run_cmd_send_data, cli_commands)
     proc_time = time.time() - start_time
     logging.info(f"Completed script in {str(datetime.timedelta(seconds=proc_time))}")
-
+    print(f"non-json total: {nj_sum}")
+    print(f"json total: {json_sum}")
+    
 
 if __name__ == "__main__":
     main()
