@@ -53,8 +53,7 @@
 #   - added option for output to csv (text) file
 # Version 2.1.2 (December 2023) - Brant
 #   - convert output format to JSON
-#   - try to guess encoding type (chardet)
-
+#   - removed dependency on the existence of the "punct" field for determining record boundary
 
 import argparse
 import glob
@@ -66,7 +65,6 @@ import datetime
 import socket
 import ssl
 import json
-import chardet
 from multiprocessing import Pool
 
 def get_args(argv=None):
@@ -104,7 +102,6 @@ def get_args(argv=None):
 
 def list_full_paths(directory,earliest,latest,import_buckets):
     #  We are accounting for directory structures specific to traditional on-prem and Smart Store
-    #  Use the -i arg is you are mounting a SmartStore directory (speed) or importing individual buckets
     #  The one thing common to them that contains min/maw epoch times is the .tsidx file
     #  Smart Store dir example:  _internal/db/bd/e3/14~676B2388-3181-4A73-BD1E-43F02EF050B4/guidSplunk-676B2388-3181-4A73-BD1E-43F02EF050B4/1668952678-1668520680-9018843933635107078.tsidx
     #  Traditional dir example:  _internaldb/db/db_1674422056_1673990057_8/1674309022-1673990057-8288841824203874392.tsidx
@@ -139,18 +136,34 @@ def run_cmd_send_data(command):
     else:
         net_output(command)
     logging.info(f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}")
-    print(f"completed processing: {command.split()[3]}")
     
     
 def file_output(command):
     try:
-        process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True)
+        process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True, encoding='latin-1')
         process.wait()
     except Exception as e:
         print(f"Error running process: {str(e)}")
-        
+
+
+def record_format(cur_rec):
+    record_split=re.search(r"^(\d+)..source::(.*?)\",\"host::(.*?)\",\"sourcetype::(.*?)\",\"(.*?)\",\"_indextime::",cur_rec,re.DOTALL|re.MULTILINE)
+    dict_record={}
+    try:
+        dict_record['time']=record_split.group(1)
+        dict_record['source']=record_split.group(2)
+        dict_record['host']=record_split.group(3)
+        dict_record['sourcetype']=record_split.group(4)
+        dict_record['raw']=record_split.group(5)
+        json_record = json.dumps(dict_record)
+    except Exception as e:
+        print(f"result is None: {str(e)}")
+    return json_record+'\n'
+
 
 def net_output(command):
+    sock = None
+    secure_sock = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if use_tls:
@@ -158,51 +171,37 @@ def net_output(command):
             context.verify_mode = ssl.CERT_NONE
             context.check_hostname = False
             secure_sock = context.wrap_socket(sock, server_hostname=dest_host)
-            try:
-                secure_sock.connect((dest_host, dest_port))
-            except (socket.error, ssl.SSLError) as e:
-                print(f"Error connecting to {dest_host}:{dest_port} with TLS: {e}")
-                return
+            secure_sock.connect((dest_host, dest_port))
             net_connect = secure_sock
         else:
-            try:
-                sock.connect((dest_host, dest_port))
-            except socket.error as e:
-                print(f"Error connecting to {dest_host}:{dest_port}: {e}")
-                return
+            sock.connect((dest_host, dest_port))
             net_connect = sock
-        try:
-            process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True, encoding='latin-1')
-            current_rec = ""
-            with net_connect, process.stdout:
-                while True:
-                    line = process.stdout.readline()
-                    if not line:
-                        break
-                    if header in line or 'log-cmdline.cfg' in line:
-                        continue
-                    if "punct" in line:
-                        current_rec += line
-                        record_split=re.search(r"^(\d+)..source::(.*?)\",\"host::(.*?)\",\"sourcetype::(.*?)\",\"(.*?)\",\"_indextime::",current_rec)
-                        dict_record={}
-                        dict_record['time']=record_split.group(1)
-                        dict_record['source']=record_split.group(2)
-                        dict_record['host']=record_split.group(3)
-                        dict_record['sourcetype']=record_split.group(4)
-                        dict_record['raw']=record_split.group(5)
-                        json_record = json.dumps(dict_record)
-                        net_connect.send(json_record.encode('latin-1'))
-                        current_rec = ""
-                    else:
-                        current_rec += line
-        except socket.error as e:
-            print(f"Error sending data over the socket: {e}")
-        except Exception as e:
-            print(f"Error running process: {str(e)}")
+
+        process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True, encoding='latin-1')
+        current_rec = ""
+        for line in process.stdout:
+            if not line:
+                break
+            if header in line or 'log-cmdline.cfg' in line:
+                continue
+            if line[0:10].isdigit():
+                if current_rec:
+                    net_connect.send(record_format(current_rec).encode('latin-1'))
+                current_rec = line
+            else:
+                current_rec += line
+        if current_rec:
+            net_connect.send(record_format(current_rec).encode('latin-1'))
+    except socket.error as e:
+        print(f"Error sending data over the socket: {e}")
+    except Exception as e:
+        print(f"Error running process: {str(e)}")
     finally:
-        if use_tls:
+        if process:
+            process.stdout.close()
+        if secure_sock:
             secure_sock.close()
-        else:
+        elif sock:
             sock.close()
 
 
@@ -272,8 +271,6 @@ def main():
         pyool.map(run_cmd_send_data, cli_commands)
     proc_time = time.time() - start_time
     logging.info(f"Completed script in {str(datetime.timedelta(seconds=proc_time))}")
-    print(f"non-json total: {nj_sum}")
-    print(f"json total: {json_sum}")
     
 
 if __name__ == "__main__":
