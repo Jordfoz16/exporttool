@@ -8,27 +8,9 @@
 #   traditional, Smart Store, and frozen buckets
 #   skips cluster replicated and hot buckets
 #
-# Example:  exporttool.py -d /opt/splunk/var/lib/splunk/bots/ -r 34.220.39.122 -p 20000 -t -n4 -l /tmp/scribl.log -et 1564819155 -lt 1566429310#
+# *** Configuration options are stored in et_options.py 
 #
-# Example:  exporttool.py -d /opt/splunk/var/lib/splunk/bots/ -r 34.220.39.122 -p 20000 -l /tmp/scribl.log -kv index=test
-#
-# Example:  exporttool.py -i -d buckets.txt -r 34.220.39.122 -p 20000 -l /tmp/scribl.log
-#
-# Required:
-#  --directory  Source directory pointing at the index.
-#  --dest_host  Remote address to send the exported data to.  This should be your Cribl worker with a TCP listener opened up.
-#  --dest_port  Remote TCP port to be used
-# Optional:
-#  --tls  Send with TLS enabled
-#  --num_streams  Number of parallel stream to utilize
-#  --logfile  Location to write/append the logging
-#  --earliest Earliest epoch time for bucket selection
-#  --latest Latest epoch time for bucket selection
-#  --keyval Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times.
-#  --bucket_name  Add the bucket=<bucket_name> kv pair to the output
-#  -i  Import buckets from a file rather than crawl the provided directory
-#
-# If you use the --keyval option, make sure your pipeline in Cribl Stream accounts for the new field(s)
+# If you use the keyval option, make sure your pipeline in Cribl Stream accounts for the new field(s)
 #
 #
 # What's New?
@@ -47,15 +29,16 @@
 #   - add the ability to import bucket list from file
 # Version 2.1.0 (November 2023) - Brant
 #   - added native libraries to eliminate the requirement for netcat
-#   - added the ability to specify options in a configuration file (can be overridden on CLI)
+#   - added the ability to specify options in a configuration file
 # Version 2.1.1 (November 2023) - Brant
 #   - replace tomllib requirement for configuration file
-#   - added option for output to csv (text) file
+#   - added option for output to csv (text) file - uses Splunk exporttool defaults
 # Version 2.1.2 (December 2023) - Brant
 #   - convert output format to JSON
 #   - removed dependency on the existence of the "punct" field for determining record boundary
+# Version 2.1.3 (December 2023) - Brant
+#   - removed cli options, control using et_options.py config
 
-import argparse
 import glob
 from subprocess import Popen, PIPE, STDOUT
 import time
@@ -66,39 +49,6 @@ import socket
 import ssl
 import json
 from multiprocessing import Pool
-
-def get_args(argv=None):
-    try:
-        from et_options import et_options
-    except ImportError:
-        print("Configuration values are kept in et_options.py, please add them there!")
-        raise
-    parser = argparse.ArgumentParser(description="This is to be run on a Splunk Indexer for the purpose\
-            of exporting buckets and streaming their contents to tcp output")
-    parser.add_argument("--tls", help="Send with TLS enabled", action='store_true')
-    parser.add_argument("--import_buckets", help="Import buckets from a file (specifid by the -d arg) rather than crawl the provided directory", action='store_true')
-    parser.add_argument("--num_streams", type=int, help="Number of parallel streams to utilize")
-    parser.add_argument("--logfile", help="Location to write/append the logging")
-    parser.add_argument("--earliest", type=int, help="Earliest epoch time for bucket selection")
-    parser.add_argument("--latest", type=int, help="Latest epoch time for bucket selection")
-    parser.add_argument("--keyval", action='append', nargs='+', help="Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times")
-    parser.add_argument("--bucket_name", help="Add bucket=<bucket_name> to the output",action='store_true')
-    parser.add_argument("--directory", default=et_options['directory'], help="Source directory pointing at the index")
-    parser.add_argument("--dest_host", default=et_options['dest_host'], help="Remote address to send the exported data to")
-    parser.add_argument("--dest_port", default=et_options['dest_port'], help="Remote TCP port to be used")
-    parser.add_argument("--file_out", default=et_options['file_out'], help="True/False on writing to file instead of network")
-    parser.set_defaults(tls=et_options['tls'],\
-                        import_buckets=et_options['import_buckets'],\
-                        num_streams=et_options['num_streams'],\
-                        logfile=et_options['logfile'],\
-                        earliest=et_options['earliest'],\
-                        latest=et_options['latest'],\
-                        keyval=et_options['keyval'],\
-                        bucket_name=et_options['bucket_name'],\
-                        file_out = et_options['file_out'],\
-                        file_out_path = et_options['file_out_path'])
-    return parser.parse_args(argv)
-
 
 def list_full_paths(directory,earliest,latest,import_buckets):
     #  We are accounting for directory structures specific to traditional on-prem and Smart Store
@@ -205,16 +155,16 @@ def net_output(command):
             sock.close()
 
 
-def build_cmd_list(buckets,args):
+def build_cmd_list(buckets, et_options):
     cli_commands=[]
     for bucket in buckets:
         exporttool_cmd=f"/opt/splunk/bin/splunk cmd exporttool {bucket} /dev/stdout -csv "
-        if args.keyval:
-            for pair in args.keyval:
+        if et_options['keyval']:
+            for pair in et_options['keyval']:
                 result = re.search(r"..(.*)=(.*)..", str(pair))
                 kv="\{result.group(1)}::{result.group(2)}\\"
                 exporttool_cmd+="|sed -e 's/^\([[:digit:]]\{10\},\)\(.*\)/\\1"+kv+",\\2/'"
-        if args.bucket_name:
+        if et_options['bucket_name']:
             b="\"bucket::"+str(bucket.split("/")[-1:][0])+"\""  #grab the bucket_name from the end of the filepath
             exporttool_cmd+="|sed -e 's/^\([[:digit:]]\{10\},\)\(.*\)/\\1"+b+",\\2/'"  #stick bucket::<bucket_name> right after the time
         cli_commands.append(exporttool_cmd)
@@ -231,43 +181,41 @@ def get_logger(name):
 
 
 def main():
-    args = get_args()
-    global header
-    global logging
-    global dest_host
-    global dest_port
-    global use_tls
-    global file_out
-    global file_out_path
+    try:
+        from et_options import et_options
+    except ImportError:
+        print("Configuration values are kept in et_options.py, please add them there!")
+        raise
+    global header, logging, dest_host, dest_port, use_tls, file_out, file_out_path
     header = '"_time",source,host,sourcetype,"_raw","_meta"'
-    dest_host = args.dest_host
-    dest_port = args.dest_port
-    use_tls = args.tls
-    file_out = args.file_out
-    file_out_path = args.file_out_path
-    logging=get_logger(args.logfile)
+    dest_host = et_options['dest_host']
+    dest_port = et_options['dest_port']
+    use_tls = et_options['tls']
+    file_out = et_options['file_out']
+    file_out_path = et_options['file_out_path']
+    logging=get_logger(et_options['logfile'])
     logging.info(f"------------\nStart time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logging.info(f"Starting a new export using {args.num_streams} streams")
-    logging.info('Beginning Script with these args: %s',' '.join(f'{k}={v}' for k, v in vars(args).items()))
+    logging.info(f"Starting a new export using {et_options['num_streams']} streams")
+    logging.info(f'Beginning Script with these et_options: {et_options}')
     start_time=time.time()
-    buckets=(list_full_paths(args.directory,args.earliest,args.latest,args.import_buckets))
-    if args.earliest < args.latest:
-        logging.info(f"Search Min epoch = {args.earliest} and Max epoch = {args.latest}")
+    buckets=(list_full_paths(et_options['directory'],et_options['earliest'],et_options['latest'],et_options['import_buckets']))
+    if et_options['earliest'] < et_options['latest']:
+        logging.info(f"Search Min epoch = {et_options['earliest']} and Max epoch = {et_options['latest']}")
     else:
-        logging.error(f"ERROR:  The specified Min epoch time ({args.earliest}) must be less than the specified Max epoch time({args.latest})")
+        logging.error(f"ERROR:  The specified Min epoch time ({et_options['earliest']}) must be less than the specified Max epoch time({et_options['latest']})")
         exit(1)
     logging.info(f"There are {len(buckets)} buckets in this directory that match the search criteria")
     logging.info(f"Exporting the following buckets:")
     for b in buckets:
         logging.info(b)
-    cli_commands=build_cmd_list(buckets, args)
+    cli_commands=build_cmd_list(buckets, et_options)
     print("-"*25)
     print(f"processing {len(cli_commands)} index files")
     print("-"*25)
     for proc in cli_commands:
         print(proc)
     print("-"*25)
-    with Pool(args.num_streams) as pyool:
+    with Pool(et_options['num_streams']) as pyool:
         pyool.map(run_cmd_send_data, cli_commands)
     proc_time = time.time() - start_time
     logging.info(f"Completed script in {str(datetime.timedelta(seconds=proc_time))}")
