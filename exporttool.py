@@ -38,6 +38,8 @@
 #   - removed dependency on the existence of the "punct" field for determining record boundary
 # Version 2.1.3 (December 2023) - Brant
 #   - removed cli options, control using et_options.py config
+# Version 2.1.4 (December 2023) - Brant
+#   - added option to write data to file, in the same format that is sent over the network
 
 import glob
 from subprocess import Popen, PIPE, STDOUT
@@ -49,6 +51,22 @@ import socket
 import ssl
 import json
 from multiprocessing import Pool
+
+
+def record_format(cur_rec):
+    record_split=re.search(r"^(\d+)..source::(.*?)\",\"host::(.*?)\",\"sourcetype::(.*?)\",\"(.*?)\",\"_indextime::",cur_rec,re.DOTALL|re.MULTILINE)
+    dict_record={}
+    try:
+        dict_record['time']=record_split.group(1)
+        dict_record['source']=record_split.group(2)
+        dict_record['host']=record_split.group(3)
+        dict_record['sourcetype']=record_split.group(4)
+        dict_record['raw']=record_split.group(5)
+        json_record = json.dumps(dict_record)
+    except Exception as e:
+        print(f"result is None: {str(e)}")
+    return json_record+'\n'
+
 
 def list_full_paths(directory,earliest,latest,import_buckets):
     #  We are accounting for directory structures specific to traditional on-prem and Smart Store
@@ -78,17 +96,23 @@ def list_full_paths(directory,earliest,latest,import_buckets):
 def run_cmd_send_data(command):
     start_time=time.time()
     if file_out:
-        file_out_name = file_out_path + command.split()[3].split('/')[-1] + '.csv'
-        file_out_command = command.split()
-        file_out_command[4] = file_out_name
-        file_out_command = ' '.join(file_out_command)
-        file_output(file_out_command)
+        if file_out_type == 'seo':
+            file_out_name = file_out_path + command.split()[3].split('/')[-1] + '.csv'
+            file_out_command = command.split()
+            file_out_command[4] = file_out_name
+            file_out_command = ' '.join(file_out_command)
+            seo_file_output(file_out_command)
+        elif file_out_type == 'exo':
+            file_out_name = file_out_path + command.split()[3].split('/')[-1] + '.json'
+            file_out_command = command.split()
+            file_out_command = ' '.join(file_out_command)
+            exo_file_output(file_out_command, file_out_name)
     else:
         net_output(command)
     logging.info(f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}")
     
     
-def file_output(command):
+def seo_file_output(command):
     try:
         process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True, encoding='latin-1')
         process.wait()
@@ -96,19 +120,29 @@ def file_output(command):
         print(f"Error running process: {str(e)}")
 
 
-def record_format(cur_rec):
-    record_split=re.search(r"^(\d+)..source::(.*?)\",\"host::(.*?)\",\"sourcetype::(.*?)\",\"(.*?)\",\"_indextime::",cur_rec,re.DOTALL|re.MULTILINE)
-    dict_record={}
+def exo_file_output(command, file_out_name):
     try:
-        dict_record['time']=record_split.group(1)
-        dict_record['source']=record_split.group(2)
-        dict_record['host']=record_split.group(3)
-        dict_record['sourcetype']=record_split.group(4)
-        dict_record['raw']=record_split.group(5)
-        json_record = json.dumps(dict_record)
-    except Exception as e:
-        print(f"result is None: {str(e)}")
-    return json_record+'\n'
+        with open(file_out_name, 'w') as exo_file:
+            try:
+                process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True, encoding='latin-1')
+                current_rec = ""
+                for line in process.stdout:
+                    if not line:
+                        break
+                    if header in line or 'log-cmdline.cfg' in line:
+                        continue
+                    if line[0:10].isdigit():
+                        if current_rec:
+                            exo_file.write(record_format(current_rec))
+                        current_rec = line
+                    else:
+                        current_rec += line
+                if current_rec:
+                    exo_file.write(record_format(current_rec))
+            except Exception as e:
+                print(f"Error running process: {str(e)}")
+    except:
+        print(f"Error opening file {str(e)}")
 
 
 def net_output(command):
@@ -186,13 +220,14 @@ def main():
     except ImportError:
         print("Configuration values are kept in et_options.py, please add them there!")
         raise
-    global header, logging, dest_host, dest_port, use_tls, file_out, file_out_path
+    global header, logging, dest_host, dest_port, use_tls, file_out, file_out_path, file_out_type
     header = '"_time",source,host,sourcetype,"_raw","_meta"'
     dest_host = et_options['dest_host']
     dest_port = et_options['dest_port']
     use_tls = et_options['tls']
     file_out = et_options['file_out']
     file_out_path = et_options['file_out_path']
+    file_out_type = et_options['file_out_type']
     logging=get_logger(et_options['logfile'])
     logging.info(f"------------\nStart time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logging.info(f"Starting a new export using {et_options['num_streams']} streams")
