@@ -1,10 +1,10 @@
 # exporttool.py
 
-Please reference this file in the repo for a detailed config guide: https://github.com/Exporttool/exporttool/blob/main/exporttool-detailed-config.pdf
+Please reference this file in the repo for a [detailed config guide](https://github.com/Exporttool/exporttool/blob/main/exporttool-detailed-config.pdf)
 
 Exporting Splunk Data at Scale with exporttool. This is a python script that can be run on each Splunk Indexer for the purpose of exporting historical bucket data (raw events + metadata) at scale by balancing the work across multiple CPUs then forwarding to Cribl.
 
-exporttool also supports the Splunk SmartStore configuration. SmartStore uses AWS S3 API to plug into the remote storage tier. Remote storage options are AWS S3 and S3 API-compliant object stores, including Dell/EMC ECS, NetApp StorageGrid, Pure Storage Flash Blade and SwiftStack. All you need to do is spin up Linux instances with lots of CPUs and memory, mount the AWS S3 (compliant) object store, install free Splunk, install exporttool/netcat, and export the data. Indexer guids come into play with Splunk's SmartStore config that affect the directory structure within the index but exporttool was rewritten to track down .tsidx files within the index you wish to export then uses the parent directory as a target bucket for export.
+exporttool also supports the Splunk SmartStore configuration. SmartStore uses AWS S3 API to plug into the remote storage tier. Remote storage options are AWS S3 and S3 API-compliant object stores, including Dell/EMC ECS, NetApp StorageGrid, Pure Storage Flash Blade and SwiftStack. All you need to do is spin up Linux instances with lots of CPUs and memory, mount the AWS S3 (compliant) object store, install free Splunk, install exporttool.py, and export the data. Indexer guids come into play with Splunk's SmartStore config that affect the directory structure within the index but exporttool was rewritten to track down .tsidx files within the index you wish to export then uses the parent directory as a target bucket for export.
 
 Supported:  On-Prem Splunk using local or SmartStore storage. Splunk Cloud using a SmartStore configuration. 
 
@@ -12,7 +12,7 @@ Not-Supported:  Splunk Cloud using a non-SmartStore configuration.
 
 # Background
 
-Exporting large amounts of previously indexed data from Splunk is challenging via the Splunk-supported approaches detailed here:  https://docs.splunk.com/Documentation/Splunk/latest/Search/Exportsearchresults.
+Exporting large amounts of previously indexed data from Splunk is challenging via the Splunk-supported approaches detailed [here](https://docs.splunk.com/Documentation/Splunk/latest/Search/Exportsearchresults).
 
 The core Splunk binary in every install provides a switch (cmd exporttool) that allows you to export the data from the compressed buckets on the indexers back into a csv format that contains the ingested events. You can dump them to very large, local files or stream them to stdout so a script can redirect over the network to a receiver such as Cribl Stream. This swith has been used by others for quite a while but it isn't well documented. 
 
@@ -33,19 +33,19 @@ There will be many buckets so some poor soul will need to build a script to expo
 # Requirements
 
 ## exporttool.py
-The options for exporttool.py are stored in a file called et_options.py, in python dictionary format. Modify the relevant options for your configuration there, prior to running the script. There is a sample of this file included in the exporttool Github repo. Individual CLI options can be overridden when running exporttool.py, as described above.
+The options for exporttool.py are stored in a file called et_options.py, in python dictionary format. Modify the relevant options for your configuration there, prior to running the script. There is a sample of this file included in the exporttool Github repo. 
 
 ## Splunk
 Splunk stores its collected data on the indexers within the “Indexing Tier” as detailed below. The data is compressed and stored in a collection of time series buckets that reside on each indexer. Each bucket contains a rawdata journal, along with associated time-series index (tsidx), and metadata files. The search heads access these buckets and it’s very rare for someone to access them directly from the indexer CLI unless there is a need to export data to retrieve the original raw events. We will use the indexer CLI to export the original raw events (per bucket and in parallel) and a few other pieces of important metadata as detailed below. 
 
-![exporttool.py data flow](/exporttool-flow.png)
+![exporttool.py data flow](xporttool.png)
 
 For a deeper dive into how Splunk indexes data, see this:  [How the indexer stores indexes - Splunk Documentation](https://docs.splunk.com/Documentation/Splunk/latest/Indexer/HowSplunkstoresindexes) 
 
 You will need:
 
 - CLI access to each Linux indexer with the index/buckets that need to be exported. This process only applies to on-prem or non-SplunkCloud deployments.
-- To make sure outbound communication from each indexer to the receiving server TCP port is open.
+- Outbound communication from each indexer to the receiving server TCP port is open.
 
 ## Frozen Buckets
 The Splunk exporttool switch that exporttool depends on requires a complete hot/warm/cold directory containing all of the metadata files in addition to the journal.gz file. When buckets are moved to a frozen archive, all of the metadata files are removed with only the journal.gz file remaining. **exporttool cannot extract raw events from frozen archives**.
@@ -55,14 +55,14 @@ Buckets must first be “thawed” as described [here](https://docs.splunk.com/D
 # Technical
 
 ## Scale
-We achieve scale for large volumes of data by processing buckets in parallel across as many CPUs as you would like to dedicate AND by streaming the data directly from disk, to STDOUT, which is directed over an encrypted (TLS) or unencrypted connection to the receiving server. Extracting/uncompressing the event data to disk is an option but results in enormous disk IO bottlenecks and disk space consumption. if you are using the file option, writing to the disk that you are reading from is NOT recommended, instead, use a network attached storage option.
+We achieve scale for large volumes of data by processing buckets in parallel across as many CPUs as you would like to dedicate AND by streaming the data directly from disk, to STDOUT, which is directed over an encrypted (TLS) or unencrypted connection to the receiving server. Extracting/uncompressing the event data to disk is an option but results in enormous disk IO bottlenecks and disk space consumption. if you are using the file option, writing to the disk that you are reading from is NOT recommended, instead, optimally use local storage, otherwise a network attached storage option.
 
-Disk speed (IOPS) and the number of CPUs are generally your limiting factors on the indexers. While disk speed is a factor, it's usually not a factors in the overall scale picture because Splunk indexers will usually have high IOPs capabilities. You can monitor the linux processes to get a feel for whether exporttool processes are in SLEEP or RUN mode. If they spend the majority of their time in SLEEP mode, they are being throttled by disk, network, receiving server, etc and adding more CPUs will probably not buy you more speed.
+When reading the data, disk speed (IOPS) and the number of CPUs are generally your limiting factors on the indexers. While disk speed is a factor, it's usually not a factor in the overall scale picture because Splunk indexers will usually have high IOPs capabilities. You can monitor the linux processes to get a feel for whether exporttool processes are in SLEEP or RUN mode. If they spend the majority of their time in SLEEP mode, they are being throttled by disk, network, receiving server, etc and adding more CPUs will probably not buy you more speed.
 
 The exporttool script running on your indexers and the receiving server are built to scale and will usually not be your bottleneck. Your bottlenecks will almost certainly be bandwidth constraints between your indexers and your final destination. Depending on where you deploy your receiving server, that bandwidth bottleneck might exist between the indexers and receiving server.
 
 ## Exported Data Format
-The exported data will be csv formatted with a header followed by the individual events. It’s important to call out that these events are often multiline events with the most common example being windows logs. The below events are examples that are generated by Splunk and then passed via stdin to the exporttool.py script.
+Splunk's exporttool utility will export data in csv format with a header, followed by the individual events. It’s important to call out that these events are often multiline events with the most common example being windows logs. The below events are examples that are generated by Splunk and then passed via stdin to the exporttool.py script.
 
 The _raw field contains the original event and the other fields were captured/created during ingest. _time is the time extracted from the event which will be the primary time reference used by the destination analytics platform. The sourcetype field will likely be what is used by the destination to determine how to parse and where to route the event.
 
@@ -70,9 +70,11 @@ Example:
 ```
 "_time",source,host,sourcetype,"_raw","_meta"
 ```
+
 ```
 1564734905,"source::10.1.1.1","host::hogshead","sourcetype::fgt_utm","date=2019-08-02 time=08:35:05 devname=hogshead devid=FGT60D4614044725 logid=1059028704 type=utm subtype=app-ctrl eventtype=app-ctrl-all level=information vd=root appid=38131 user="""" srcip=10.1.1.103 srcport=51971 srcintf=""internal"" dstip=172.217.11.227 dstport=443 dstintf=""wan1"" profiletype=""applist"" proto=6 service=""HTTPS"" policyid=1 sessionid=594789 applist=""default"" appcat=""General.Interest"" app=""Google.Accounts"" action=pass hostname=""ssl.gstatic.com"" url=""/"" msg=""General.Interest: Google.Accounts,"" apprisk=elevated","_indextime::1564734907 _subsecond::.000 syslog-server::jupiter severity::notice facility::user punct::""=--_=::_=_=_=_=_=-_=--_=_=_=_=\""\""_=..._=_=\""\""_=..._="""
 ```
+
 ```
 1564734846,"source::WinEventLog:Microsoft-Windows-PowerShell/Operational","host::titan","sourcetype::XmlWinEventLog:Microsoft-Windows-PowerShell/Operational","<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-PowerShell' Guid='{A0C1853B-5C40-4B15-8766-3CF1C58F985A}'/><EventID>4103</EventID><Version>1</Version><Level>4</Level><Task>106</Task><Opcode>20</Opcode><Keywords>0x0</Keywords><TimeCreated SystemTime='2019-08-02T08:34:06.167139700Z'/><EventRecordID>5968761</EventRecordID><Correlation ActivityID='{135BC459-4718-0000-AAD1-74131847D501}'/><Execution ProcessID='3016' ThreadID='3720'/><Channel>Microsoft-Windows-PowerShell/Operational</Channel><Computer>titan.thirstyberner.com</Computer><Security UserID='S-1-5-18'/></System><EventData><Data Name='ContextInfo'>        Severity = Informational
 
@@ -118,7 +120,7 @@ We don't care about indexing new data and we don't care about distributed search
 ## Cribl Stream Config
 You can get started instantly with Cribl Cloud or even using the Cribl Free [license option](https://docs.cribl.io/stream/licensing/) but keep in mind daily ingest limits (very generous) and # of cores (also very generous at 10) that can be used may factor into a full scale data export. If you choose to install Cribl Stream on-prem on in your own cloud, the [documentation](https://docs.cribl.io/stream/getting-started-guide) is your friend and will get you going quickly.
 
-Once you have satisfied the above requirements (CLI and firewall) on your Splunk indexers, grab the [exporttool.py script and configuration file from the github repo](https://github.com/Exporttool/exporttool) and copy them over to each indexer. The only thing in the script that is hard coded is the default install location of Splunk (/opt/splunk) which you can easily modify if you are running a non-default config. Keep in mind that we are running the script directly on the Splunk indexers and a python binary is kept under $SPLUNK_HOME/bin. The script only uses built-in libraries so there is no need for third-party installs.
+Once you have satisfied the above requirements (CLI and firewall) on your Splunk indexers, grab the [exporttool.py script and configuration file from the github repo](https://github.com/Exporttool/exporttool) and copy them over to each indexer. Keep in mind that we are running the script directly on the Splunk indexers and the Splunk-distributed python binary is kept under $SPLUNK_HOME/bin. The script only uses built-in libraries so there is no need for installation of third-party Python libraries.
 
 The [github repo](https://github.com/Exporttool/exporttool) also contains a [Cribl Pack for exporttool](https://github.com/Exporttool/exporttool/blob/main/cc-exporttool.crbl) which contains a few sanity checks dealing with possible unexpected large events that exceed line breakers and a couple data transforms. Download the pack and load it up as described below. 
 
@@ -138,7 +140,10 @@ exporttool will create a TCP connection for each bucket that is exported and if 
 ## Splunk Event Sizes
 You need to pay attention to event sizes in Splunk as it pertains to the Event breaking in Cribl. As noted above in the Event Breaker screenshot, the max event size has a default setting of 51200 bytes. If you use exporttool to send events into Cribl Stream larger than that, things break. Either increase your event breaking max event size, use the Cribl Stream Pipeline to drop the large events (example:  by sourcetype), or do not use exporttool to export the buckets containing the large events.
 
-Here is a quick Splunk search highlighting the large events that need to be dealt with: index=bots|eval l=len(_raw)|where l>25000|stats count values(sourcetype) by l|sort - l
+Here is a quick Splunk search highlighting the large events that need to be dealt with:
+``` 
+index=bots|eval l=len(_raw)|where l>25000|stats count values(sourcetype) by l|sort - l
+```
 
 ## Bottlenecks
 As mentioned above, the bottleneck you will most likely run into will be bandwidth in your data path or ingest rate at the final destination. Anything you can do to parallelize that final write will pay dividends. For example, you may want to use Cribl Stream’s Output Router to write to multiple S3 buckets based on the original Splunk Index or Sourcetype if bandwidth is not your bottleneck.
@@ -161,42 +166,46 @@ If you are leveraging the Splunk Dynamic Data Self Storage option, you should be
 Create your S3 Object Store (bucket) in AWS S3 and make sure your indexer has the proper permission to access the store. In this example, we create an IAM role granting proper S3 permissions and attached it to an indexer EC2 instance. 
 
 Upload a file to the bucket and validate your permission with:  
-
+```
 aws s3 ls s3://smart-store-exporttool
+```
 
 ### SmartStore config on the indexer /opt/splunk/etc/system/local/indexes.conf:
-        [default]
-        remotePath=volume:ecs_store/$_index_name
-
-        [volume:ecs_store]
-        storageType = remote
-        path = s3://smart-store-exporttool/exporttool
+```
+[default]
+remotePath=volume:ecs_store/$_index_name
+[volume:ecs_store]
+storageType = remote
+path = s3://smart-store-exporttool/exporttool
+```
 
 Restart Splunk. If you need to force a roll from hot to warm buckets in Splunk, use the below command to roll the _internal index:
-
-        /opt/splunk/bin/splunk _internal call /data/indexes/_internal/roll-hot-buckets
+```
+/opt/splunk/bin/splunk _internal call /data/indexes/_internal/roll-hot-buckets
+```
 
 You will notice that the local indexer bucket names may differ slightly from the standard config when using Smart Store but they still start with db_. 
-
-        ls -l /opt/splunk/var/lib/splunk/_internaldb/db
-        total 16
-        -rw------- 1 root root   10 Oct 24 16:03 CreationTime
-        drwx--x--- 3 root root  271 Oct 25 16:55 db_1666627667_1666627364_0_676B2388-3181-4A73-BD1E-43F02EF050B4
-        drwx--x--- 3 root root 4096 Oct 25 16:55 db_1666634954_1666627665_1_676B2388-3181-4A73-BD1E-43F02EF050B4
-        drwx--x--- 3 root root  271 Oct 25 16:55 db_1666635850_1666634954_2_676B2388-3181-4A73-BD1E-43F02EF050B4
-        drwx--x--- 3 root root  271 Oct 25 16:55 db_1666636181_1666635850_3_676B2388-3181-4A73-BD1E-43F02EF050B4
-        drwx--x--- 3 root root  271 Oct 25 16:55 db_1666639559_1666636180_4_676B2388-3181-4A73-BD1E-43F02EF050B4
-        drwx--x--- 3 root root  295 Oct 25 16:55 db_1666639746_1666639558_5_676B2388-3181-4A73-BD1E-43F02EF050B4
-        drwx--x--- 3 root root  271 Oct 25 16:55 db_1666716888_1666638001_6_676B2388-3181-4A73-BD1E-43F02EF050B4
-        drwx--x--- 3 root root  271 Oct 25 16:57 db_1666717006_1666716888_7_676B2388-3181-4A73-BD1E-43F02EF050B4
-        drwx--x--- 3 root root  295 Oct 25 17:00 db_1666717202_1666717006_8_676B2388-3181-4A73-BD1E-43F02EF050B4
-        drwx--x--- 3 root root  294 Oct 26 13:57 db_1666792676_1666717204_9_676B2388-3181-4A73-BD1E-43F02EF050B4
-        drwx--x--- 2 root root    6 Oct 24 16:03 GlobalMetaData
-        drwx--x--- 3 root root 4096 Nov  2 21:04 hot_v1_10
-        drwx--x--- 3 root root 4096 Nov  2 21:04 hot_v1_11
+```
+ls -l /opt/splunk/var/lib/splunk/_internaldb/db
+total 16
+-rw------- 1 root root   10 Oct 24 16:03 CreationTime
+drwx--x--- 3 root root  271 Oct 25 16:55 db_1666627667_1666627364_0_676B2388-3181-4A73-BD1E-43F02EF050B4
+drwx--x--- 3 root root 4096 Oct 25 16:55 db_1666634954_1666627665_1_676B2388-3181-4A73-BD1E-43F02EF050B4
+drwx--x--- 3 root root  271 Oct 25 16:55 db_1666635850_1666634954_2_676B2388-3181-4A73-BD1E-43F02EF050B4
+drwx--x--- 3 root root  271 Oct 25 16:55 db_1666636181_1666635850_3_676B2388-3181-4A73-BD1E-43F02EF050B4
+drwx--x--- 3 root root  271 Oct 25 16:55 db_1666639559_1666636180_4_676B2388-3181-4A73-BD1E-43F02EF050B4
+drwx--x--- 3 root root  295 Oct 25 16:55 db_1666639746_1666639558_5_676B2388-3181-4A73-BD1E-43F02EF050B4
+drwx--x--- 3 root root  271 Oct 25 16:55 db_1666716888_1666638001_6_676B2388-3181-4A73-BD1E-43F02EF050B4
+drwx--x--- 3 root root  271 Oct 25 16:57 db_1666717006_1666716888_7_676B2388-3181-4A73-BD1E-43F02EF050B4
+drwx--x--- 3 root root  295 Oct 25 17:00 db_1666717202_1666717006_8_676B2388-3181-4A73-BD1E-43F02EF050B4
+drwx--x--- 3 root root  294 Oct 26 13:57 db_1666792676_1666717204_9_676B2388-3181-4A73-BD1E-43F02EF050B4
+drwx--x--- 2 root root    6 Oct 24 16:03 GlobalMetaData
+drwx--x--- 3 root root 4096 Nov  2 21:04 hot_v1_10
+drwx--x--- 3 root root 4096 Nov  2 21:04 hot_v1_11
+```
 
 ### S3 Object Store Structure
-The directory structure within the S3 bucket is different than what is local to the indexer and will resemble something similar to the below. This will be important as we will be mounting this bucket within Linux and pointing exporttool at this new structure to access buckets for exporting events. The index name (_internal in thee below example) is the piece exporttool needs to see. You might want to mount the entire ‘exporttool' directory to make sure you have access to all indexes in this object store.
+The directory structure within the S3 bucket is different than what is local to the indexer and will resemble something similar to the below. This will be important as we will be mounting this bucket within Linux and pointing exporttool at this new structure to access buckets for exporting events. The index name (_internal in the below example) is the piece exporttool needs to see. You might want to mount the entire ‘exporttool' directory to make sure you have access to all indexes in this object store.
 
 ### Mount the Smart Store bucket and export
 We opted to use S3fs-fuse to mount the S3 bucket in Linux. Follow the direction in the preceding link to install S3fs and mount the directory. Once the directory is mounted, use exporttool by pointing it at the index and exporttool will figure out where the buckets are and filter as needed if you specified time constraints as arguments. 
