@@ -192,7 +192,7 @@ def net_output(command):
 def build_cmd_list(buckets, et_options):
     cli_commands=[]
     for bucket in buckets:
-        exporttool_cmd=f"/opt/splunk/bin/splunk cmd exporttool {bucket} /dev/stdout -csv "
+        exporttool_cmd=f"{splunk_home}/bin/splunk cmd exporttool {bucket} /dev/stdout -csv "
         if et_options['keyval']:
             for pair in et_options['keyval']:
                 result = re.search(r"..(.*)=(.*)..", str(pair))
@@ -220,8 +220,9 @@ def main():
     except ImportError:
         print("Configuration values are kept in et_options.py, please add them there!")
         raise
-    global header, logging, dest_host, dest_port, use_tls, file_out, file_out_path, file_out_type
+    global header, logging, dest_host, dest_port, use_tls, file_out, file_out_path, file_out_type, splunk_home
     header = '"_time",source,host,sourcetype,"_raw","_meta"'
+    splunk_home = et_options['splunk_home']
     dest_host = et_options['dest_host']
     dest_port = et_options['dest_port']
     use_tls = et_options['tls']

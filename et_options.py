@@ -2,6 +2,7 @@
 # be maintained for this to work properly.
 
 et_options = {
+    'splunk_home': '/opt/splunk/',
     'directory': '/opt/splunk/etc/apps/botsv3_data_set/var/lib/splunk/botsv3/',
     'dest_host': 'route-host',
     'dest_port': 10065,
@@ -14,7 +15,7 @@ et_options = {
     'latest': 9999999999,
     'keyval': [],
     'bucket_name': False,
-    'file_out': False,
+    'file_out': True,
     'file_out_path': '/data/logs/cribl/',
     'file_out_type': 'exo'
 }
