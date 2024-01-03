@@ -8,29 +8,10 @@
 #   traditional, Smart Store, and frozen buckets
 #   skips cluster replicated and hot buckets
 #
-# Example:  exporttool.py -d /opt/splunk/var/lib/splunk/bots/ -r 34.220.39.122 -p 20000 -t -n4 -l /tmp/scribl.log -et 1564819155 -lt 1566429310#
+# *** Configuration options are stored in et_options.py 
 #
-# Example:  exporttool.py -d /opt/splunk/var/lib/splunk/bots/ -r 34.220.39.122 -p 20000 -l /tmp/scribl.log -kv index=test
+# If you use the keyval option, make sure your pipeline in Cribl Stream accounts for the new field(s)
 #
-# Example:  exporttool.py -i -d buckets.txt -r 34.220.39.122 -p 20000 -l /tmp/scribl.log
-#
-# Required:
-#  -d  Source directory pointing at the index.
-#  -r  Remote address to send the exported data to.  This should be your Cribl worker with a TCP listener opened up.
-#  -p  Remote TCP port to be used
-# Optional:
-#  -t  Send with TLS enabled
-#  -n  Number of parallel stream to utilize
-#  -l  Location to write/append the logging
-#  -et Earliest epoch time for bucket selection
-#  -lt Latest epoch time for bucket selection
-#  -kv Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times.
-#  -b  Add the bucket=<bucketname> kv pair to the output
-#  -i  Import buckets from a file rather than crawl the provided directory
-#
-# Make sure nc (netcat) is in the path or hard code it below to fit your needs
-#
-# If you use the -kv option, make sure your pipeline in Cribl Stream accounts for the new field(s)
 #
 # What's New?
 #
@@ -46,119 +27,235 @@
 #   - update earliest/latest search
 # Version 2.0.4 (Sept 2023) - Apger
 #   - add the ability to import bucket list from file
+# Version 2.1.0 (November 2023) - Brant
+#   - added native libraries to eliminate the requirement for netcat
+#   - added the ability to specify options in a configuration file
+# Version 2.1.1 (November 2023) - Brant
+#   - replace tomllib requirement for configuration file
+#   - added option for output to csv (text) file - uses Splunk exporttool defaults
+# Version 2.1.2 (December 2023) - Brant
+#   - convert output format to JSON
+#   - removed dependency on the existence of the "punct" field for determining record boundary
+# Version 2.1.3 (December 2023) - Brant
+#   - removed cli options, control using et_options.py config
+# Version 2.1.4 (December 2023) - Brant
+#   - added option to write data to file, in the same format that is sent over the network
 
-import argparse,os,subprocess,sys,time,logging,re,datetime
+import glob
+from subprocess import Popen, PIPE, STDOUT
+import time
+import logging
+import re
+import datetime
+import socket
+import ssl
+import json
 from multiprocessing import Pool
 
-def getArgs(argv=None):
-    parser = argparse.ArgumentParser(description="This is to be run on a Splunk Indexer for the purpose\
-            of exporting buckets and streaming their contents to Cribl Stream")
-    parser.add_argument("-t","--TLS", help="Send with TLS enabled", action='store_true')
-    parser.add_argument("-i","--importBuckets", help="Import buckets from a file (specifid by the -d arg) rather than crawl the provided directory", action='store_true')
-    parser.add_argument("-n","--numstreams", default="1", type=int, help="Number of parallel stream to utilize")
-    parser.add_argument("-l","--logfile", default="/tmp/SplunkToCribl.log", help="Location to write/append the logging")
-    parser.add_argument("-et","--earliest", default=0, type=int, help="Earliest epoch time for bucket selection")
-    parser.add_argument("-lt","--latest", default=9999999999, type=int, help="Latest epoch time for bucket selection")
-    parser.add_argument("-kv","--keyval", action='append', nargs='+', help="Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw.  Can specify -kv multiple times")
-    parser.add_argument("-b","--bucketname", help="Add bucket=<bucketname> to the output",action='store_true')
-    requiredNamed = parser.add_argument_group('required named arguments')
-    requiredNamed.add_argument("-d","--directory", help="Source directory pointing at the index", required=True)
-    requiredNamed.add_argument("-r","--remoteIP", help="Remote address to send the exported data to", required=True)
-    requiredNamed.add_argument("-p","--remotePort", help="Remote TCP port to be used", required=True)
-    return parser.parse_args(argv)
 
-def list_full_paths(directory,earliest,latest,importBuckets):
+def record_format(cur_rec):
+    record_split=re.search(r"^(\d+)..source::(.*?)\",\"host::(.*?)\",\"sourcetype::(.*?)\",\"(.*?)\",\"_indextime::",cur_rec,re.DOTALL|re.MULTILINE)
+    dict_record={}
+    try:
+        dict_record['time']=record_split.group(1)
+        dict_record['source']=record_split.group(2)
+        dict_record['host']=record_split.group(3)
+        dict_record['sourcetype']=record_split.group(4)
+        dict_record['raw']=record_split.group(5)
+        json_record = json.dumps(dict_record)
+    except Exception as e:
+        print(f"result is None: {str(e)}")
+    return json_record+'\n'
+
+
+def list_full_paths(directory,earliest,latest,import_buckets):
     #  We are accounting for directory structures specific to traditional on-prem and Smart Store
-    #  Use the -i arg is you are mounting a SmartStore directory (speed) or importing individual buckets
-    #  The one thing common to them that contains min/maw epoch times is the .tsixd file
+    #  The one thing common to them that contains min/maw epoch times is the .tsidx file
     #  Smart Store dir example:  _internal/db/bd/e3/14~676B2388-3181-4A73-BD1E-43F02EF050B4/guidSplunk-676B2388-3181-4A73-BD1E-43F02EF050B4/1668952678-1668520680-9018843933635107078.tsidx
     #  Traditional dir example:  _internaldb/db/db_1674422056_1673990057_8/1674309022-1673990057-8288841824203874392.tsidx
-    buckets=[]
-    files=[]
-    if importBuckets:
-        bucket_file = open(directory, "r")
-        for line in bucket_file:
-            if not line.startswith("#"):
-                files.append(line.strip())
+    files = []
+    buckets = []
+    if len(import_buckets) > 0:
+        for line in import_buckets:
+            files.append(line.strip())
     else:
-        for root, dirs, filesInDir in os.walk(directory, topdown=True):
-            for file in filesInDir:
-                if "tsidx" in file:
-                    files.append(os.path.join(root, file))
-
-    # files[] contains the full paths, including the .tsidx filname
+        files_to_process = glob.glob(f"{directory}/**/*.tsidx", recursive=True)
+        files = files_to_process
     for file in files:
         tsidx=file.split('/')[-1] # the tsidx filename less the path
-        maxEpoch=tsidx.split('-')[-3] # Grab max and min from file name
-        minEpoch=tsidx.split('-')[-2] # Grab max and min from file name
+        max_epoch=tsidx.split('-')[-3] # Grab max and min from file name
+        min_epoch=tsidx.split('-')[-2] # Grab max and min from file name
         bucketName=file.split("/")[-2] #Grab the name of the bucket (parent dir for the tsidx filename)
-        if earliest <= int(maxEpoch) and latest >= int(minEpoch) and "DISABLED" not in file and not bucketName.startswith("rb_"):  # filter buckets if user passed min/max epoch times
+        if earliest <= int(max_epoch) and latest >= int(min_epoch) and "DISABLED" not in file and not bucketName.startswith("rb_") and not bucketName.startswith("hot"):  # filter buckets if user passed min/max epoch times
         # Will assume everything is a bucket except for dir names that contain DISABLED, are cluster associated replicated buckets (tested for non-smartstore), or hot buckets
         # For an on-prem config, we might find multiple tsidx files in an index.  Only grab the iunique parent directory containing these tsidx files once.
             buckets.append(re.sub('\/[^\/]+$', '', file))  #strip the .tsidx filename from the path to only include the parent dir
-    return(buckets)
+    return set(buckets)
 
-def buildCmdList(buckets,args):
-    cliCommands=[]
-    for bucket in buckets:
-        exporttoolCmd="/opt/splunk/bin/splunk cmd exporttool "+bucket+" /dev/stdout -csv "
-        if args.keyval:
-            for pair in args.keyval:
-                result = re.search(r"..(.*)=(.*)..", str(pair))
-                kv="\""+result.group(1)+"::"+result.group(2)+"\""
-                exporttoolCmd+="|sed -e 's/^\([[:digit:]]\{10\},\)\(.*\)/\\1"+kv+",\\2/'"
-        if args.bucketname:
-            b="\"bucket::"+str(bucket.split("/")[-1:][0])+"\""  #grab the bucketname from the end of the filepath
-            exporttoolCmd+="|sed -e 's/^\([[:digit:]]\{10\},\)\(.*\)/\\1"+b+",\\2/'"  #stick bucket::<bucketname> right after the time
-        exporttoolCmd+="| nc "
-        if args.TLS:
-            exporttoolCmd+="--ssl "
-        exporttoolCmd+=args.remoteIP
-        exporttoolCmd+=" "+args.remotePort
-        cliCommands.append(exporttoolCmd)
-        logging.info("exporttoolCmd: %s ",exporttoolCmd)
-    return cliCommands
 
-def runCmd(cmd):
-        startTime=time.time()
-        p = subprocess.Popen(cmd,  shell=True, encoding='utf-8',stderr=subprocess.PIPE)
-        while True:
-            out = p.stderr.read(1)
-            if out == '' and p.poll() != None:
+def run_cmd_send_data(command):
+    start_time=time.time()
+    if file_out:
+        if file_out_type == 'seo':
+            file_out_name = file_out_path + command.split()[3].split('/')[-1] + '.csv'
+            file_out_command = command.split()
+            file_out_command[4] = file_out_name
+            file_out_command = ' '.join(file_out_command)
+            seo_file_output(file_out_command)
+        elif file_out_type == 'exo':
+            file_out_name = file_out_path + command.split()[3].split('/')[-1] + '.json'
+            file_out_command = command.split()
+            file_out_command = ' '.join(file_out_command)
+            exo_file_output(file_out_command, file_out_name)
+    else:
+        net_output(command)
+    logging.info(f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}")
+    
+    
+def seo_file_output(command):
+    try:
+        process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True, encoding='latin-1')
+        process.wait()
+    except Exception as e:
+        print(f"Error running process: {str(e)}")
+
+
+def exo_file_output(command, file_out_name):
+    try:
+        with open(file_out_name, 'w') as exo_file:
+            try:
+                process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True, encoding='latin-1')
+                current_rec = ""
+                for line in process.stdout:
+                    if not line:
+                        break
+                    if header in line or 'log-cmdline.cfg' in line:
+                        continue
+                    if line[0:10].isdigit():
+                        if current_rec:
+                            exo_file.write(record_format(current_rec))
+                        current_rec = line
+                    else:
+                        current_rec += line
+                if current_rec:
+                    exo_file.write(record_format(current_rec))
+            except Exception as e:
+                print(f"Error running process: {str(e)}")
+    except:
+        print(f"Error opening file {str(e)}")
+
+
+def net_output(command):
+    sock = None
+    secure_sock = None
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if use_tls:
+            context = ssl.create_default_context()
+            context.verify_mode = ssl.CERT_NONE
+            context.check_hostname = False
+            secure_sock = context.wrap_socket(sock, server_hostname=dest_host)
+            secure_sock.connect((dest_host, dest_port))
+            net_connect = secure_sock
+        else:
+            sock.connect((dest_host, dest_port))
+            net_connect = sock
+
+        process = Popen(command, shell=True, stdout=PIPE, stderr=STDOUT, text=True, encoding='latin-1')
+        current_rec = ""
+        for line in process.stdout:
+            if not line:
                 break
-            if out != '':
-                sys.stdout.write(out)
-                sys.stdout.flush()
-        logging.info("Finished in %s seconds: %s ",time.time()-startTime,cmd)
+            if header in line or 'log-cmdline.cfg' in line:
+                continue
+            if line[0:10].isdigit():
+                if current_rec:
+                    net_connect.send(record_format(current_rec).encode('latin-1'))
+                current_rec = line
+            else:
+                current_rec += line
+        if current_rec:
+            net_connect.send(record_format(current_rec).encode('latin-1'))
+    except socket.error as e:
+        print(f"Error sending data over the socket: {e}")
+    except Exception as e:
+        print(f"Error running process: {str(e)}")
+    finally:
+        if process:
+            process.stdout.close()
+        if secure_sock:
+            secure_sock.close()
+        elif sock:
+            sock.close()
 
-def getLogger(name):
+
+def build_cmd_list(buckets, et_options):
+    cli_commands=[]
+    for bucket in buckets:
+        exporttool_cmd=f"{splunk_home}/bin/splunk cmd exporttool {bucket} /dev/stdout -csv "
+        if et_options['keyval']:
+            for pair in et_options['keyval']:
+                result = re.search(r"..(.*)=(.*)..", str(pair))
+                kv="\{result.group(1)}::{result.group(2)}\\"
+                exporttool_cmd+="|sed -e 's/^\([[:digit:]]\{10\},\)\(.*\)/\\1"+kv+",\\2/'"
+        if et_options['bucket_name']:
+            b="\"bucket::"+str(bucket.split("/")[-1:][0])+"\""  #grab the bucket_name from the end of the filepath
+            exporttool_cmd+="|sed -e 's/^\([[:digit:]]\{10\},\)\(.*\)/\\1"+b+",\\2/'"  #stick bucket::<bucket_name> right after the time
+        cli_commands.append(exporttool_cmd)
+        logging.info(f"exporttool_cmd: {exporttool_cmd}")
+    return cli_commands
+
+
+def get_logger(name):
     logger = logging.Logger(name)
     logger.setLevel(logging.DEBUG)
     handler = logging.FileHandler(name, 'a')
     logger.addHandler(handler)
     return logger
 
+
 def main():
-    argvals = None
-    args = getArgs(argvals)
-    global logging
-    logging=getLogger(args.logfile)
-    logging.info("------------\nStart time: "+ datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    logging.info('Starting a new export using %i streams', args.numstreams)
-    logging.info('Beginning Script with these args: %s',' '.join(f'{k}={v}' for k, v in vars(args).items()))
-    startTime=time.time()
-    buckets=(list_full_paths(args.directory,args.earliest,args.latest,args.importBuckets))
-    if args.earliest < args.latest:
-        logging.info('Search Min epoch = %i and Max epoch = %i',args.earliest,args.latest)
+    try:
+        from et_options import et_options
+    except ImportError:
+        print("Configuration values are kept in et_options.py, please add them there!")
+        raise
+    global header, logging, dest_host, dest_port, use_tls, file_out, file_out_path, file_out_type, splunk_home
+    header = '"_time",source,host,sourcetype,"_raw","_meta"'
+    splunk_home = et_options['splunk_home']
+    dest_host = et_options['dest_host']
+    dest_port = et_options['dest_port']
+    use_tls = et_options['tls']
+    file_out = et_options['file_out']
+    file_out_path = et_options['file_out_path']
+    file_out_type = et_options['file_out_type']
+    logging=get_logger(et_options['logfile'])
+    logging.info(f"------------\nStart time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logging.info(f"Starting a new export using {et_options['num_streams']} streams")
+    logging.info(f'Beginning Script with these et_options: {et_options}')
+    start_time=time.time()
+    buckets=(list_full_paths(et_options['directory'],et_options['earliest'],et_options['latest'],et_options['import_buckets']))
+    if et_options['earliest'] < et_options['latest']:
+        logging.info(f"Search Min epoch = {et_options['earliest']} and Max epoch = {et_options['latest']}")
     else:
-        logging.error('ERROR:  The specified Min epoch time (%i) must be less than the specified Max epoch time(%i)',args.earliest,args.latest)
+        logging.error(f"ERROR:  The specified Min epoch time ({et_options['earliest']}) must be less than the specified Max epoch time({et_options['latest']})")
         exit(1)
-    logging.info('There are %s buckets in this directory that match the search criteria',len(buckets))
-    logging.info('Exporting these buckets: %s',buckets)
-    cliCommands=buildCmdList(buckets,args)
-    with Pool(args.numstreams) as p:
-        p.map(runCmd,cliCommands)
-    logging.info('Done with script in %s seconds',time.time()-startTime)
+    logging.info(f"There are {len(buckets)} buckets in this directory that match the search criteria")
+    logging.info(f"Exporting the following buckets:")
+    for b in buckets:
+        logging.info(b)
+    cli_commands=build_cmd_list(buckets, et_options)
+    print("-"*25)
+    print(f"processing {len(cli_commands)} index files")
+    print("-"*25)
+    for proc in cli_commands:
+        print(proc)
+    print("-"*25)
+    with Pool(et_options['num_streams']) as pyool:
+        pyool.map(run_cmd_send_data, cli_commands)
+    proc_time = time.time() - start_time
+    logging.info(f"Completed script in {str(datetime.timedelta(seconds=proc_time))}")
+    
 
 if __name__ == "__main__":
     main()
