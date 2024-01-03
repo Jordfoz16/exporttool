@@ -15,7 +15,7 @@ et_options = {
     'latest': 9999999999,
     'keyval': [],
     'bucket_name': False,
-    'file_out': True,
+    'file_out': False,
     'file_out_path': '/data/logs/cribl/',
     'file_out_type': 'exo'
 }
