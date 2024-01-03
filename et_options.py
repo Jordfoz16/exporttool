@@ -32,6 +32,6 @@ et_options = {
 # latest:           Latest epoch time for bucket selection
 # keyval:           Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw
 # bucket_name:      add bucket name to output
-# file_out:         if set to True, network output is disabled
+# file_out:         if set to True, network output is disabled and results are sent to disk instead.
 # file_out_path:    destination folder if file_out is set to True
 # file_out_type:    'seo' for default Splunk exporttool (csv) out. 'exo' for JSON formatted output
