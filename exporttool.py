@@ -42,7 +42,7 @@
 #   - added option to write data to file, in the same format that is sent over the network
 # Version 2.1.5 (January 2024) - Brant »
 #   - removed extraneous code
-#   - formatted code for better readability
+#   - formatted code for readability
 
 import glob
 from subprocess import Popen, PIPE, STDOUT
