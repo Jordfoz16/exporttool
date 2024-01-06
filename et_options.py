@@ -3,29 +3,30 @@
 
 et_options = {
     'splunk_home': '/opt/splunk/',
-    'directory': '/opt/splunk/etc/apps/botsv3_data_set/var/lib/splunk/botsv3/',
-    'dest_host': 'route-host',
+    'directory': '/opt/splunk/var/lib/splunk/botsv4/',
+    'dest_host': 'x-tractor',
     'dest_port': 10065,
     'tls': False,
     'check_hostname': False,
     'import_buckets': [],
-    'num_streams': 2,
+    'num_streams': 1,
     'logfile': '/tmp/splunk_to_tcp.log',
     'earliest': 0,
     'latest': 9999999999,
-    'keyval': [],
+#     'keyval': [],
     'bucket_name': False,
-    'file_out': True,
+    'file_out': False,
     'file_out_path': '/data/logs/cribl/',
     'file_out_type': 'exo'
 }
 
+# splunk_home       path of the splunk installation
 # directory:        required if sending to server
 # dest_host:        required if sending to server
 # dest_port:        required if sending to server
 # tls:              set to True for TLS (SSL) connection
 # check_hostname:   set to False to disable checking of certificate hostname during SSL connection
-# import_buckets:   add full paths to buckets for extraction,  as a list
+# import_buckets:   add full paths to buckets for extraction, as a list
 # num_streams:      set the number of processes to run at a time (higher is not necessarily better)
 # logfile:          Location to write/append the logging
 # earliest:         Earliest epoch time for bucket selection
