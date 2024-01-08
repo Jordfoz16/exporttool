@@ -1,10 +1,8 @@
 # exporttool.py
 
-Please reference this file in the repo for a [detailed config guide](https://github.com/Exporttool/exporttool/blob/main/exporttool-detailed-config.pdf)
+Exporting Splunk Data at Scale with exporttool.py. This is a python script that can be run on each Splunk Indexer for the purpose of exporting historical bucket data (raw events + metadata) at scale by balancing the work across multiple CPUs, formatting, and either forwarding to a server or writing to a filesystem.
 
-Exporting Splunk Data at Scale with exporttool. This is a python script that can be run on each Splunk Indexer for the purpose of exporting historical bucket data (raw events + metadata) at scale by balancing the work across multiple CPUs then forwarding to Cribl.
-
-exporttool also supports the Splunk SmartStore configuration. SmartStore uses AWS S3 API to plug into the remote storage tier. Remote storage options are AWS S3 and S3 API-compliant object stores, including Dell/EMC ECS, NetApp StorageGrid, Pure Storage Flash Blade and SwiftStack. All you need to do is spin up Linux instances with lots of CPUs and memory, mount the AWS S3 (compliant) object store, install free Splunk, install exporttool.py, and export the data. Indexer guids come into play with Splunk's SmartStore config that affect the directory structure within the index but exporttool was rewritten to track down .tsidx files within the index you wish to export then uses the parent directory as a target bucket for export.
+exporttool.py also supports the Splunk SmartStore configuration. SmartStore uses AWS S3 API to plug into the remote storage tier. Remote storage options are AWS S3 and S3 API-compliant object stores, including Dell/EMC ECS, NetApp StorageGrid, Pure Storage Flash Blade and SwiftStack. All you need to do is spin up Linux instances with lots of CPUs and memory, mount the AWS S3 (compliant) object store, install free Splunk, install exporttool.py, and export the data. Indexer guids come into play with Splunk's SmartStore config that affect the directory structure within the index but exporttool.py was written to track down .tsidx files within the index you wish to export then uses the parent directory as a target bucket for export.
 
 Supported:  On-Prem Splunk using local or SmartStore storage. Splunk Cloud using a SmartStore configuration. 
 
@@ -48,7 +46,7 @@ You will need:
 - Outbound communication from each indexer to the receiving server TCP port is open.
 
 ## Frozen Buckets
-The Splunk exporttool switch that exporttool depends on requires a complete hot/warm/cold directory containing all of the metadata files in addition to the journal.gz file. When buckets are moved to a frozen archive, all of the metadata files are removed with only the journal.gz file remaining. **exporttool cannot extract raw events from frozen archives**.
+The Splunk exporttool utility that exporttool.py depends on requires a complete hot/warm/cold directory containing all of the metadata files in addition to the journal.gz file. When buckets are moved to a frozen archive, all of the metadata files are removed with only the journal.gz file remaining. **exporttool cannot extract raw events from frozen archives**.
 
 Buckets must first be “thawed” as described [here](https://docs.splunk.com/Documentation/Splunk/latest/Indexer/Restorearchiveddata). It’s a straightforward process of copying the frozen buckets somewhere and running a “splunk rebuild” for each bucket to recreate the metadata. exporttool can be run against this thawed data.
 
@@ -59,7 +57,7 @@ We achieve scale for large volumes of data by processing buckets in parallel acr
 
 When reading the data, disk speed (IOPS) and the number of CPUs are generally your limiting factors on the indexers. While disk speed is a factor, it's usually not a factor in the overall scale picture because Splunk indexers will usually have high IOPs capabilities. You can monitor the linux processes to get a feel for whether exporttool processes are in SLEEP or RUN mode. If they spend the majority of their time in SLEEP mode, they are being throttled by disk, network, receiving server, etc and adding more CPUs will probably not buy you more speed.
 
-The exporttool script running on your indexers and the receiving server are built to scale and will usually not be your bottleneck. Your bottlenecks will almost certainly be bandwidth constraints between your indexers and your final destination. Depending on where you deploy your receiving server, that bandwidth bottleneck might exist between the indexers and receiving server.
+The exporttool.py script running on your indexers and the receiving server are built to scale and will usually not be your bottleneck. Your bottlenecks will almost certainly be bandwidth constraints between your indexers and your final destination. Depending on where you deploy your receiving server, that bandwidth bottleneck might exist between the indexers and receiving server.
 
 ## Exported Data Format
 Splunk's exporttool utility will export data in csv format with a header, followed by the individual events. It’s important to call out that these events are often multiline events with the most common example being windows logs. The below events are examples that are generated by Splunk and then passed via stdin to the exporttool.py script.
@@ -110,7 +108,7 @@ Example:
 ```
 
 ## Cribl Stream Routing
-The routing of data as you need it into the destination you need it to be in is one of the most important use cases Cribl Stream brings to the table. exporttool is a great use case for that exact scenario. You will likely have indexes you wish to export which contain multiple sourcetypes. The Splunk sourcetype assignment is contained in every event that Cribl Stream processes. You can filter, optimize, route, etc each of those sourcetypes however you choose. We used Splunk's Boss of the SOC dataset for testing largely because it is real-world security data ingested during a live campaign and it contains a very diverse collection of data (souretypes) to best flush out unexpected bugs (multiline events, gigantic events, etc). The github repo details over 100 sourcetypes available in the BOTSv3 dataset.
+The routing of data as you need it into the destination you need it to be in is one of the most important use cases Cribl Stream brings to the table. exporttool.py is a great use case for that exact scenario. You will likely have indexes you wish to export which contain multiple sourcetypes. The Splunk sourcetype assignment is contained in every event that Cribl Stream processes. You can filter, optimize, route, etc. each of those sourcetypes however you choose. We used Splunk's Boss of the SOC dataset for testing largely because it is real-world security data ingested during a live campaign and it contains a very diverse collection of data (souretypes) to best flush out unexpected bugs (multiline events, gigantic events, etc). The github repo details over 100 sourcetypes available in the BOTS dataset.
 
 ## On No!  My Splunk license expired!
 Worry not, my friend. When the enterprise license expires, Splunk customers are free to use the 60-day trial or even the free version of Splunk to perform the export. Sanity check this claim here: [https://docs.splunk.com/Documentation/Splunk/latest/Admin/MoreaboutSplunkFree](https://docs.splunk.com/Documentation/Splunk/latest/Admin/MoreaboutSplunkFree).
@@ -120,29 +118,32 @@ We don't care about indexing new data and we don't care about distributed search
 ## Cribl Stream Config
 You can get started instantly with Cribl Cloud or even using the Cribl Free [license option](https://docs.cribl.io/stream/licensing/) but keep in mind daily ingest limits (very generous) and # of cores (also very generous at 10) that can be used may factor into a full scale data export. If you choose to install Cribl Stream on-prem on in your own cloud, the [documentation](https://docs.cribl.io/stream/getting-started-guide) is your friend and will get you going quickly.
 
-Once you have satisfied the above requirements (CLI and firewall) on your Splunk indexers, grab the [exporttool.py script and configuration file from the github repo](https://github.com/Exporttool/exporttool) and copy them over to each indexer. Keep in mind that we are running the script directly on the Splunk indexers and the Splunk-distributed python binary is kept under $SPLUNK_HOME/bin. The script only uses built-in libraries so there is no need for installation of third-party Python libraries.
+Once you have satisfied the above requirements (CLI and firewall) on your Splunk indexers, grab the [exporttool.py script and configuration file from the github repo](https://github.com/Exporttool/exporttool) and copy them over to each indexer. Keep in mind that we are running the script directly on the Splunk indexers and should utilize the Splunk-distributed python binary, which is kept under $SPLUNK_HOME/bin. The script only uses built-in modules so there is no need for installation of third-party Python libraries.
 
-The [github repo](https://github.com/Exporttool/exporttool) also contains a [Cribl Pack for exporttool](https://github.com/Exporttool/exporttool/blob/main/cc-exporttool.crbl) which contains a few sanity checks dealing with possible unexpected large events that exceed line breakers and a couple data transforms. Download the pack and load it up as described below. 
+The [exporttool repo](https://github.com/Exporttool/exporttool) also contains a [Cribl Pack for exporttool](https://github.com/Exporttool/exporttool/blob/main/cc-exporttool.crbl) which contains a few sanity checks dealing with possible unexpected large events that exceed line breakers, and a couple of data transforms. 
 
-Reference or download [this pdf document](https://github.com/Exporttool/exporttool/blob/main/exporttool-detailed-config.pdf) for detailed Cribl Stream configuration guidelines.
 
 # Comments/Caveats:
 
 ## Cribl Stream Worker Load-Balancers
-exporttool will create a TCP connection for each bucket that is exported and if you are instructing exporttool to use X CPUs to export an index, your load-balancer will see ~X concurrent connects at any given time balancing them across the load-balanced worker nodes. Here are a few guidelines for configuring your load-balancer:
+exporttool.py will create a TCP connection for each bucket that is exported and if you are instructing exporttool.py to use X CPUs to export an index, your load-balancer will see X concurrent connects at any given time, distributing them across the load-balanced worker nodes. Here are a few guidelines for configuring your load-balancer:
 
-- Configure exporttool to send to the external IP or FQDN of the load-balancer. Make sure you use nslookup to test that FQDN to make certain you don't have anything unexpected regarding multiple IPs. This has happened. We ran into an issue where someone configured DNS to return external IP addresses for load-balancers spread across multiple availability zones even though there were only workers in one of them.
-- Verify the configured port on the external interface of the load-balancer is the one exporttool is sending data to. If you opened up TLS/443, on the load-balancer, make sure you have “-t -p 443” args being used with exporttool. It’s perfectly fine to terminate SSL at the load-balancer and have the load-balancer send data to non-TLS ports using a different port number (ex port 20000) on the workers.
-- If you into an issue, you can run exporttool directly to a worker node if it can be reached.
+- Configure exporttool.py (via et_options.py) to send to the external IP or FQDN of the load-balancer. Make sure you use nslookup to test that FQDN to make certain you don't have anything unexpected regarding multiple IPs. This has happened. We ran into an issue where someone configured DNS to return external IP addresses for load-balancers spread across multiple availability zones even though there were only workers in one of them.
+- Verify the configured port on the external interface of the load-balancer is the one exporttool.py is sending data to. If you opened up TLS/443, on the load-balancer, ensure you have tls option in et_options.py set to "True". It’s perfectly fine to terminate SSL at the load-balancer and have the load-balancer send data to non-TLS ports using a different port number (ex port 20000) on the workers.
+- If you encounter an issue, you can point exporttool.py directly to a worker node if it can be reached.
 - Double-check all firewall rules.
-- Instead of using exporttool during your testing which is pretty heavy-handed, you can test with this as described [here](https://docs.cribl.io/stream/deploy-distributed/):
+- Instead of using exporttool.py during your testing which is pretty heavy-handed, you can test with this as described [here](https://docs.cribl.io/stream/deploy-distributed/):
 
 ## Splunk Event Sizes
-You need to pay attention to event sizes in Splunk as it pertains to the Event breaking in Cribl. As noted above in the Event Breaker screenshot, the max event size has a default setting of 51200 bytes. If you use exporttool to send events into Cribl Stream larger than that, things break. Either increase your event breaking max event size, use the Cribl Stream Pipeline to drop the large events (example:  by sourcetype), or do not use exporttool to export the buckets containing the large events.
+You need to pay attention to event sizes in Splunk as it pertains to the Event breaking in Cribl. The max event size has a default setting of 51200 bytes. If you use exporttool.py to send events into Cribl Stream larger than that, things break. Either increase your event breaking max event size, use the Cribl Stream Pipeline to drop the large events (example: by sourcetype), or do not use exporttool.py to export the buckets containing the large events.
 
 Here is a quick Splunk search highlighting the large events that need to be dealt with:
 ``` 
-index=bots|eval l=len(_raw)|where l>25000|stats count values(sourcetype) by l|sort - l
+index=<relevant index> 
+| eval l=len(_raw)
+| where l>25000
+| stats count values(sourcetype) by l
+| sort - l
 ```
 
 ## Bottlenecks
@@ -151,7 +152,7 @@ As mentioned above, the bottleneck you will most likely run into will be bandwid
 ## Index Clusters and replicated buckets
 See this for some background on what happens with bucket replication. This is the important part: “The indexer cluster replicates data on a bucket-by-bucket basis. The original bucket copy and its replicated copies on other peer nodes contain identical sets of data, although only [searchable](https://docs.splunk.com/Splexicon:Searchable) copies also contain the index files.”
 
-The name of replicated buckets start with “rb_” which exporttool ignores preventing the duplicate indexing of replicated buckets within the index cluster. exporttool only operates on buckets whose names start with “db_”.
+The name of replicated buckets start with “rb_” which exporttool.pu ignores preventing the duplicate indexing of replicated buckets within the index cluster. exporttool.py only operates on buckets whose names start with “db_”.
 
 ## Hot Buckets
 Hot buckets are ignored. Similar to how replicated bucket names begin with “_rb”, hot buckets start with “hot_” and they are both ignored within a simple if statement in the script. If you have a use case where you need to export hot buckets, feel free to modify the if statement.
@@ -160,7 +161,7 @@ Hot buckets are ignored. Similar to how replicated bucket names begin with “_r
 If you are leveraging the Splunk Dynamic Data Self Storage option, you should be able to mount your private buckets containing the data and mount it just as we do for the Smart Store config above.
 
 ## Splunk SmartStore Support
-[SmartStore](https://docs.splunk.com/Documentation/Splunk/latest/Indexer/AboutSmartStore) is an indexer capability that provides a way to use remote object stores, such as Amazon S3, Google GCS, or Microsoft Azure Blob storage, to store indexed data. At this point in time, exporttool has only been tested on AWS S3 Object Stores. The below process was used to test exporttool.
+[SmartStore](https://docs.splunk.com/Documentation/Splunk/latest/Indexer/AboutSmartStore) is an indexer capability that provides a way to use remote object stores, such as Amazon S3, Google GCS, or Microsoft Azure Blob storage, to store indexed data. At this point in time, exporttool.py has only been tested on AWS S3 Object Stores. The below process was used to test exporttool.py.
 
 ### S3 Object Store
 Create your S3 Object Store (bucket) in AWS S3 and make sure your indexer has the proper permission to access the store. In this example, we create an IAM role granting proper S3 permissions and attached it to an indexer EC2 instance. 
@@ -205,10 +206,10 @@ drwx--x--- 3 root root 4096 Nov  2 21:04 hot_v1_11
 ```
 
 ### S3 Object Store Structure
-The directory structure within the S3 bucket is different than what is local to the indexer and will resemble something similar to the below. This will be important as we will be mounting this bucket within Linux and pointing exporttool at this new structure to access buckets for exporting events. The index name (_internal in the below example) is the piece exporttool needs to see. You might want to mount the entire ‘exporttool' directory to make sure you have access to all indexes in this object store.
+The directory structure within the S3 bucket is different than what is local to the indexer and will resemble something similar to the below. This will be important as we will be mounting this bucket within Linux and pointing exporttool.py at this new structure to access buckets for exporting events. The index name (_internal in the below example) is the piece exporttool.py needs to see. You might want to mount the entire directory to make sure you have access to all indexes in this object store.
 
 ### Mount the Smart Store bucket and export
-We opted to use S3fs-fuse to mount the S3 bucket in Linux. Follow the direction in the preceding link to install S3fs and mount the directory. Once the directory is mounted, use exporttool by pointing it at the index and exporttool will figure out where the buckets are and filter as needed if you specified time constraints as arguments. 
+We opted to use S3fs-fuse to mount the S3 bucket in Linux. Follow the direction in the preceding link to install S3fs and mount the directory. Once the directory is mounted, use exporttool.py by pointing it at the index and exporttool.py will figure out where the buckets are and filter as needed if you specified time constraints as arguments. 
 
 
 
