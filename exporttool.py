@@ -10,8 +10,6 @@
 #
 # *** Configuration options are stored in et_options.py
 #
-# If you use the keyval option, make sure your pipeline in Cribl Stream accounts for the new field(s)
-#
 #
 # What's New?
 #
@@ -42,7 +40,7 @@
 #   - added option to write data to file, in the same format that is sent over the network
 # Version 2.1.5 (January 2024) - Brant »
 #   - removed extraneous code
-#   - formatted code for readability
+#   - formatted and commented code for readability
 
 import glob
 from subprocess import Popen, PIPE, STDOUT
@@ -57,6 +55,7 @@ from multiprocessing import Pool
 
 
 def record_format(cur_rec):
+    # split out primary metadata fields
     record_split = re.search(
         r"^(\d+)..source::(.*?)\",\"host::(.*?)\",\"sourcetype::(.*?)\",\"(.*?)\",\"_indextime::",
         cur_rec,
@@ -64,6 +63,7 @@ def record_format(cur_rec):
     )
     dict_record = {}
     try:
+        # populate dictionary with raw and other primary metadata fields, for JSON output
         dict_record["time"] = record_split.group(1)
         dict_record["source"] = record_split.group(2)
         dict_record["host"] = record_split.group(3)
@@ -76,10 +76,6 @@ def record_format(cur_rec):
 
 
 def list_full_paths(directory, earliest, latest, import_buckets):
-    #  We are accounting for directory structures specific to traditional on-prem and Smart Store
-    #  The one thing common to them that contains min/maw epoch times is the .tsidx file
-    #  Smart Store dir example:  _internal/db/bd/e3/14~676B2388-3181-4A73-BD1E-43F02EF050B4/guidSplunk-676B2388-3181-4A73-BD1E-43F02EF050B4/1668952678-1668520680-9018843933635107078.tsidx
-    #  Traditional dir example:  _internaldb/db/db_1674422056_1673990057_8/1674309022-1673990057-8288841824203874392.tsidx
     files = []
     buckets = []
     if len(import_buckets) > 0:
@@ -111,6 +107,7 @@ def list_full_paths(directory, earliest, latest, import_buckets):
 
 
 def run_cmd_send_data(command):
+    # determine type of output, network or file (and what file type)
     start_time = time.time()
     if file_out:
         if file_out_type == "seo":
@@ -132,6 +129,7 @@ def run_cmd_send_data(command):
 
 
 def seo_file_output(command):
+    # run with (seo) exporttool default output (csv), with relative filename
     try:
         process = Popen(
             command,
@@ -147,6 +145,8 @@ def seo_file_output(command):
 
 
 def exo_file_output(command, file_out_name):
+    # run with (exo) exporttool.py output, with relative filename and .json extension
+    # this function also assembles full records for the output
     try:
         with open(file_out_name, "w") as exo_file:
             try:
@@ -179,6 +179,8 @@ def exo_file_output(command, file_out_name):
 
 
 def net_output(command):
+    # net_output encodes data and sends it over socket, with TLS enabled, if specified.
+    # this function also assembles full records for the output
     sock = None
     secure_sock = None
     try:
@@ -229,22 +231,20 @@ def net_output(command):
 
 
 def build_cmd_list(buckets):
+    # builds string of commands that is worked through by the number of processes specified
+    # as "num_streams" in the configuration file
     cli_commands = []
     for bucket in buckets:
         exporttool_cmd = (
             f"{splunk_home}/bin/splunk cmd exporttool {bucket} /dev/stdout -csv "
         )
-        #         if et_options['keyval']:
-        #             for pair in et_options['keyval']:
-        #                 result = re.search(r"..(.*)=(.*)..", str(pair))
-        #                 kv="\{result.group(1)}::{result.group(2)}\\"
-        #                 exporttool_cmd+="|sed -e 's/^\([[:digit:]]\{10\},\)\(.*\)/\\1"+kv+",\\2/'"
         cli_commands.append(exporttool_cmd)
         logging.info(f"exporttool_cmd: {exporttool_cmd}")
     return cli_commands
 
 
 def get_logger(name):
+    # define and initialize file that the run log is written to
     logger = logging.Logger(name)
     logger.setLevel(logging.DEBUG)
     try:
@@ -256,11 +256,14 @@ def get_logger(name):
 
 
 def main():
+    # read job configuration file (et_options.py)
     try:
         from et_options import et_options
     except ImportError:
         print("Configuration values are kept in et_options.py, please add them there!")
         raise
+
+    # initialize config file option variables as global variables
     global header, logging, dest_host, dest_port, use_tls, file_out, file_out_path, file_out_type, splunk_home
     header = '"_time",source,host,sourcetype,"_raw","_meta"'
     splunk_home = et_options["splunk_home"]
@@ -270,6 +273,8 @@ def main():
     file_out = et_options["file_out"]
     file_out_path = et_options["file_out_path"]
     file_out_type = et_options["file_out_type"]
+
+    # write run header to logfile
     logging = get_logger(et_options["logfile"])
     logging.info("-" * 25)
     logging.info(f"Start time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -282,6 +287,8 @@ def main():
         et_options["latest"],
         et_options["import_buckets"],
     )
+
+    # sanity check timing scope configuration specified
     if et_options["earliest"] < et_options["latest"]:
         logging.info(
             f"Search Min epoch = {et_options['earliest']} and Max epoch = {et_options['latest']}"
@@ -291,6 +298,8 @@ def main():
             f"ERROR: The specified Min epoch time ({et_options['earliest']}) must be less than the specified Max epoch time({et_options['latest']})"
         )
         exit(1)
+
+    # add job information to the log file
     logging.info(
         f"There are {len(buckets)} buckets in this directory that match the search criteria"
     )
@@ -304,6 +313,8 @@ def main():
     for proc in cli_commands:
         print(proc)
     print("-" * 25)
+
+    # create processes from command list, run as many processes as specified until list exhauseted
     with Pool(et_options["num_streams"]) as pyool:
         pyool.map(run_cmd_send_data, cli_commands)
     proc_time = time.time() - start_time

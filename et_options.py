@@ -2,22 +2,21 @@
 # be maintained for this to work properly.
 
 et_options = {
-    'splunk_home': '/opt/splunk/',
-    'directory': '/opt/splunk/var/lib/splunk/botsv4/',
-    'dest_host': 'x-tractor',
-    'dest_port': 10065,
-    'tls': False,
-    'check_hostname': False,
-    'import_buckets': [],
-    'num_streams': 1,
-    'logfile': '/tmp/splunk_to_tcp.log',
-    'earliest': 0,
-    'latest': 9999999999,
-#     'keyval': [],
-    'bucket_name': False,
-    'file_out': False,
-    'file_out_path': '/data/logs/cribl/',
-    'file_out_type': 'exo'
+    "splunk_home": "/opt/splunk/",
+    "directory": "/opt/splunk/var/lib/splunk/suricata/",
+    "dest_host": "x-tractor",
+    "dest_port": 10065,
+    "tls": False,
+    "check_hostname": False,
+    "import_buckets": [],
+    "num_streams": 2,
+    "logfile": "/tmp/splunk_to_tcp.log",
+    "earliest": 0,
+    "latest": 9999999999,
+    "bucket_name": False,
+    "file_out": False,
+    "file_out_path": "/data/logs/cribl/",
+    "file_out_type": "seo",
 }
 
 # splunk_home       path of the splunk installation
@@ -31,7 +30,6 @@ et_options = {
 # logfile:          Location to write/append the logging
 # earliest:         Earliest epoch time for bucket selection
 # latest:           Latest epoch time for bucket selection
-# keyval:           Specify key=value to carry forward as a field in addition to _time, host, source, sourcetype, and _raw
 # bucket_name:      add bucket name to output
 # file_out:         if set to True, network output is disabled
 # file_out_path:    destination folder if file_out is set to True
