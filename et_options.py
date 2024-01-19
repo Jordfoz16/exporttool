@@ -16,7 +16,8 @@ et_options = {
     "bucket_name": False,
     "file_out": False,
     "file_out_path": "/data/logs/cribl/",
-    "file_out_type": "seo",
+    "file_out_type": "exo",
+    "file_out_compress": True,
 }
 
 # splunk_home       path of the splunk installation
@@ -34,3 +35,4 @@ et_options = {
 # file_out:         if set to True, network output is disabled
 # file_out_path:    destination folder if file_out is set to True
 # file_out_type:    'seo' for default Splunk exporttool (csv) out. 'exo' for JSON formatted output
+# file_out_compress:    only applicable when writing to file with file_out_type='exo'
