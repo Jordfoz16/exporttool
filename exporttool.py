@@ -41,6 +41,9 @@
 # Version 2.1.5 (January 2024) - Brant »
 #   - removed extraneous code
 #   - formatted and commented code for readability
+# Version 2.1.6 (January 2024) - Brant
+#   - option "file_out_compress" for writing json records directly to gzip compressed file
+#   - added some stdout output to see process progress (also in log file)
 
 import glob
 from subprocess import Popen, PIPE, STDOUT
@@ -51,6 +54,7 @@ import datetime
 import socket
 import ssl
 import json
+import gzip
 from multiprocessing import Pool
 
 
@@ -76,6 +80,8 @@ def record_format(cur_rec):
 
 
 def list_full_paths(directory, earliest, latest, import_buckets):
+    # processes all buckets listed under the "import_buckets" option in et_options.py if specified
+    # if "import_buckets" not specified, processes all buckets under the path given in the "directory" option
     files = []
     buckets = []
     if len(import_buckets) > 0:
@@ -126,6 +132,7 @@ def run_cmd_send_data(command):
     logging.info(
         f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}"
     )
+    print(f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}")
 
 
 def seo_file_output(command):
@@ -144,11 +151,21 @@ def seo_file_output(command):
         print(f"Error running process: {str(e)}")
 
 
-def exo_file_output(command, file_out_name):
-    # run with (exo) exporttool.py output, with relative filename and .json extension
-    # this function also assembles full records for the output
+def exo_file_output(command, file_out_name, compressionlevel=5):
     try:
-        with open(file_out_name, "w") as exo_file:
+        if file_out_compress:
+            file_out_name = file_out_name + ".gz"
+            open_args = {
+                "filename": file_out_name,
+                "mode": "wt",
+                "compresslevel": compressionlevel,
+            }
+            open_func = gzip.open
+        else:
+            open_args = {"filename": file_out_name, "mode": "w"}
+            open_func = open
+
+        with open_func(**open_args) as exo_file:
             try:
                 process = Popen(
                     command,
@@ -174,7 +191,7 @@ def exo_file_output(command, file_out_name):
                     exo_file.write(record_format(current_rec))
             except Exception as e:
                 print(f"Error running process: {str(e)}")
-    except:
+    except Exception as e:
         print(f"Error opening file {str(e)}")
 
 
@@ -264,21 +281,23 @@ def main():
         raise
 
     # initialize config file option variables as global variables
-    global header, logging, dest_host, dest_port, use_tls, file_out, file_out_path, file_out_type, splunk_home
+    global header, logging, dest_host, dest_port, use_tls, num_streams, file_out, file_out_path, file_out_type, splunk_home, file_out_compress
     header = '"_time",source,host,sourcetype,"_raw","_meta"'
     splunk_home = et_options["splunk_home"]
     dest_host = et_options["dest_host"]
     dest_port = et_options["dest_port"]
     use_tls = et_options["tls"]
+    num_streams = et_options["num_streams"]
     file_out = et_options["file_out"]
     file_out_path = et_options["file_out_path"]
     file_out_type = et_options["file_out_type"]
+    file_out_compress = et_options["file_out_compress"]
 
     # write run header to logfile
     logging = get_logger(et_options["logfile"])
     logging.info("-" * 25)
     logging.info(f"Start time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logging.info(f"Starting a new export using {et_options['num_streams']} streams")
+    logging.info(f"Starting a new export using {num_streams} streams")
     logging.info(f"Beginning Script with these et_options: {et_options}")
     start_time = time.time()
     buckets = list_full_paths(
@@ -311,14 +330,35 @@ def main():
     print(f"processing {len(cli_commands)} index files")
     print("-" * 25)
     for proc in cli_commands:
-        print(proc)
+        print(proc.split()[3])
     print("-" * 25)
-
-    # create processes from command list, run as many processes as specified until list exhauseted
-    with Pool(et_options["num_streams"]) as pyool:
-        pyool.map(run_cmd_send_data, cli_commands)
-    proc_time = time.time() - start_time
-    logging.info(f"Completed script in {str(datetime.timedelta(seconds=proc_time))}")
+    print("Chosen Configuration:")
+    if file_out:
+        print(f"File Output! <---")
+        print(f"Output Path = {file_out_path}")
+        print(f"File Type = {file_out_type}")
+        print(f"Compressed = {file_out_compress}")
+    else:
+        print(f"Network Output! <---")
+        print(f"Destination = {dest_host}:{dest_port}")
+        print(f"TLS = {tls}")
+    print(f"Max Concurrent Processes = {num_streams}")
+    print("-" * 25)
+    print()
+    continue_prompt = input(
+        "Getting ready to process the above list, with displayed configuration. Continue? (y/n): "
+    )
+    if continue_prompt.lower() == "y":
+        # create processes from command list, run as many processes as specified until list exhauseted
+        with Pool(num_streams) as pyool:
+            pyool.map(run_cmd_send_data, cli_commands)
+        proc_time = time.time() - start_time
+        logging.info(
+            f"Completed processing in {str(datetime.timedelta(seconds=proc_time))}"
+        )
+        print(f"Completed processing in {str(datetime.timedelta(seconds=proc_time))}")
+    else:
+        quit()
 
 
 if __name__ == "__main__":
