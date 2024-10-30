@@ -188,7 +188,7 @@ def exo_file_output(command, file_out_name, compressionlevel=5):
                     shell=True,
                     stdout=PIPE,
                     stderr=STDOUT,
-                    text=True,
+                    universal_newlines=True,
                     encoding="utf-8",
                 )
                 current_rec = ""
@@ -235,7 +235,7 @@ def net_output(command):
             shell=True,
             stdout=PIPE,
             stderr=STDOUT,
-            text=True,
+            universal_newlines=True,
             encoding="utf-8",
         )
         current_rec = ""
