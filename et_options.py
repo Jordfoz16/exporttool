@@ -14,6 +14,7 @@ et_options = {
     "earliest": 0,
     "latest": 9999999999,
     "bucket_name": False,
+    "only_db": False,
     "file_out": False,
     "file_out_path": "/data/logs/cribl/",
     "file_out_type": "exo",
@@ -32,6 +33,7 @@ et_options = {
 # earliest:         Earliest epoch time for bucket selection
 # latest:           Latest epoch time for bucket selection
 # bucket_name:      add bucket name to output
+# only_db:          only read files that start with db_ (True or False)
 # file_out:         if set to True, network output is disabled and results are sent to disk instead.
 # file_out_path:    destination folder if file_out is set to True
 # file_out_type:    'seo' for default Splunk exporttool (csv) out. 'exo' for JSON formatted output
