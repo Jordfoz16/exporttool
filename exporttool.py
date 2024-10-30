@@ -83,7 +83,7 @@ def record_format(cur_rec):
         dict_record["index"] = index_name(et_options["directory"])
         json_record = json.dumps(dict_record)
     except Exception as e:
-        print(f"result is None: {str(e)}")
+        logging.info(f"result is None: {str(e)}")
     return json_record + "\n"
 
 def index_name(path):
@@ -149,7 +149,7 @@ def run_cmd_send_data(command):
     logging.info(
         f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}"
     )
-    print(f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}")
+    logging.info(f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}")
 
 
 def seo_file_output(command):
@@ -254,9 +254,9 @@ def net_output(command):
         if current_rec:
             net_connect.send(record_format(current_rec).encode("utf-8"))
     except socket.error as e:
-        print(f"Error sending data over the socket: {e}")
+        logging.info(f"Error sending data over the socket: {e}")
     except Exception as e:
-        print(f"Error running process: {str(e)}")
+        logging.info(f"Error running process: {str(e)}")
     finally:
         if process:
             process.stdout.close()
@@ -370,7 +370,7 @@ def main():
         logging.info(
             f"Completed processing in {str(datetime.timedelta(seconds=proc_time))}"
         )
-        print(f"Completed processing in {str(datetime.timedelta(seconds=proc_time))}")
+        logging.info(f"Completed processing in {str(datetime.timedelta(seconds=proc_time))}")
     else:
         quit()
 
