@@ -80,7 +80,7 @@ def record_format(cur_rec):
         dict_record["host"] = record_split.group(3)
         dict_record["sourcetype"] = record_split.group(4)
         dict_record["raw"] = record_split.group(5)
-        dict_record["index"] = et_options["directory"]
+        dict_record["index"] = index_name(et_options["directory"])
         json_record = json.dumps(dict_record)
     except Exception as e:
         print(f"result is None: {str(e)}")
