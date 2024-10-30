@@ -132,6 +132,7 @@ def list_full_paths(directory, earliest, latest, import_buckets):
 def run_cmd_send_data(command):
     # determine type of output, network or file (and what file type)
     start_time = time.time()
+    print(f"exporttool_cmd: {command}")
     if file_out:
         if file_out_type == "seo":
             file_out_name = file_out_path + command.split()[3].split("/")[-1] + ".csv"
@@ -146,10 +147,8 @@ def run_cmd_send_data(command):
             exo_file_output(file_out_command, file_out_name)
     else:
         net_output(command)
-    logging.info(
-        f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}"
-    )
     logging.info(f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}")
+    print(f"{time.time()-start_time:7.2f} seconds to process: {command.split()[3]}")
 
 
 def seo_file_output(command):
