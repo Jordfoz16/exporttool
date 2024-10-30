@@ -119,7 +119,7 @@ def list_full_paths(directory, earliest, latest, import_buckets):
             and "DISABLED" not in file
             and not bucketName.startswith("rb_")
             and not bucketName.startswith("hot")
-            and (not et_options.get("only_db") or bucketName.startswith("sb_"))
+            and (not et_options.get("only_db") or bucketName.startswith("db_"))
         ):  # filter buckets if user passed min/max epoch times
             # Will assume everything is a bucket except for dir names that contain DISABLED, are cluster associated replicated buckets (tested for non-smartstore), or hot buckets
             # For an on-prem config, we might find multiple tsidx files in an index.  Only grab the iunique parent directory containing these tsidx files once.
