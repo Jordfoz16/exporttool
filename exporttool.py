@@ -354,7 +354,7 @@ def main():
     else:
         print(f"Network Output! <---")
         print(f"Destination = {dest_host}:{dest_port}")
-        print(f"TLS = {tls}")
+        print(f"TLS = {use_tls}")
     print(f"Max Concurrent Processes = {num_streams}")
     print("-" * 25)
     print()
