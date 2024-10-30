@@ -55,8 +55,15 @@ import socket
 import ssl
 import json
 import gzip
+import os
 from multiprocessing import Pool
 
+# read job configuration file (et_options.py)
+try:
+    from et_options import et_options
+except ImportError:
+    print("Configuration values are kept in et_options.py, please add them there!")
+    raise
 
 def record_format(cur_rec):
     # split out primary metadata fields
@@ -73,11 +80,20 @@ def record_format(cur_rec):
         dict_record["host"] = record_split.group(3)
         dict_record["sourcetype"] = record_split.group(4)
         dict_record["raw"] = record_split.group(5)
+        dict_record["index"] = et_options["directory"]
         json_record = json.dumps(dict_record)
     except Exception as e:
         print(f"result is None: {str(e)}")
     return json_record + "\n"
 
+def index_name(path):
+    # Split the path into parts and filter out any empty strings
+    path_parts = [part for part in path.split(os.sep) if part]
+    # Check if there are at least two parts in the path
+    if len(path_parts) < 2:
+        return None  # Return None if there aren't enough directories
+    # Return the second-to-last part
+    return path_parts[-2]
 
 def list_full_paths(directory, earliest, latest, import_buckets):
     # processes all buckets listed under the "import_buckets" option in et_options.py if specified
@@ -143,8 +159,8 @@ def seo_file_output(command):
             shell=True,
             stdout=PIPE,
             stderr=STDOUT,
-            text=True,
-            encoding="latin-1",
+            universal_newlines=True,
+            encoding="utf-8",
         )
         process.wait()
     except Exception as e:
@@ -173,7 +189,7 @@ def exo_file_output(command, file_out_name, compressionlevel=5):
                     stdout=PIPE,
                     stderr=STDOUT,
                     text=True,
-                    encoding="latin-1",
+                    encoding="utf-8",
                 )
                 current_rec = ""
                 for line in process.stdout:
@@ -200,6 +216,8 @@ def net_output(command):
     # this function also assembles full records for the output
     sock = None
     secure_sock = None
+    process = None
+
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if use_tls:
@@ -218,7 +236,7 @@ def net_output(command):
             stdout=PIPE,
             stderr=STDOUT,
             text=True,
-            encoding="latin-1",
+            encoding="utf-8",
         )
         current_rec = ""
         for line in process.stdout:
@@ -228,12 +246,12 @@ def net_output(command):
                 continue
             if line[0:10].isdigit():
                 if current_rec:
-                    net_connect.send(record_format(current_rec).encode("latin-1"))
+                    net_connect.send(record_format(current_rec).encode("utf-8"))
                 current_rec = line
             else:
                 current_rec += line
         if current_rec:
-            net_connect.send(record_format(current_rec).encode("latin-1"))
+            net_connect.send(record_format(current_rec).encode("utf-8"))
     except socket.error as e:
         print(f"Error sending data over the socket: {e}")
     except Exception as e:
@@ -273,12 +291,7 @@ def get_logger(name):
 
 
 def main():
-    # read job configuration file (et_options.py)
-    try:
-        from et_options import et_options
-    except ImportError:
-        print("Configuration values are kept in et_options.py, please add them there!")
-        raise
+    
 
     # initialize config file option variables as global variables
     global header, logging, dest_host, dest_port, use_tls, num_streams, file_out, file_out_path, file_out_type, splunk_home, file_out_compress
